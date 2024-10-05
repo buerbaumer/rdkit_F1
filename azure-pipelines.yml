@@ -35,9 +35,9 @@ jobs:
 - job: macOS_x64
   timeoutInMinutes: 120
   pool:
-    vmImage: macos-latest
+    vmImage: macos-12
   variables:
-    compiler: clangxx_osx-64
+    compiler: clangxx_osx-64=18.1
     compiler_version: 12.0
     boost_version: 1.82.0
     number_of_cores: sysctl -n hw.ncpu
@@ -50,9 +50,9 @@ jobs:
   pool:
     vmImage: windows-2019
   variables:
-    boost_version: 1.71.0
+    boost_version: 1.84.0
     number_of_cores: '%NUMBER_OF_PROCESSORS%'
-    python_name: python38
+    python: python=3.12
   steps:
   - template: .azure-pipelines/vs_build.yml
 - job: Windows_VS2022_x64_dll
@@ -60,9 +60,9 @@ jobs:
   pool:
     vmImage: windows-2019
   variables:
-    boost_version: 1.71.0
+    boost_version: 1.84.0
     number_of_cores: '%NUMBER_OF_PROCESSORS%'
-    python_name: python38
+    python: python=3.12
   steps:
   - template: .azure-pipelines/vs_build_dll.yml
 - job: Ubuntu_x64_cartridge
@@ -70,7 +70,7 @@ jobs:
   pool:
     vmImage: ubuntu-20.04
   variables:
-    boost_version: 1.69.0
+    boost_version: 1.71.0
     number_of_cores: nproc
     compiler: gxx_linux-64
     cc: gcc-10
@@ -106,7 +106,7 @@ jobs:
 - job: macOS_x64_java
   timeoutInMinutes: 90
   pool:
-    vmImage: macos-latest
+    vmImage: macos-12
   variables:
     compiler: clangxx_osx-64
     compiler_version: 15.0

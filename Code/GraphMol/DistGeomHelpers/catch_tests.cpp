@@ -595,7 +595,8 @@ TEST_CASE("double bond stereo not honored in conformer generator") {
 
 TEST_CASE("tracking failure causes") {
   SECTION("basics") {
-    auto mol = "O=c2cc3CCc1ccc(cc1Br)CCc2c(O)c3=O"_smiles;
+    auto mol =
+        "C=CC1=C(N)Oc2cc1c(-c1cc(C(C)O)cc(=O)cc1C1NCC(=O)N1)c(OC)c2OC"_smiles;
     REQUIRE(mol);
     MolOps::addHs(*mol);
     DGeomHelpers::EmbedParameters ps = DGeomHelpers::ETKDGv3;
@@ -603,10 +604,9 @@ TEST_CASE("tracking failure causes") {
     ps.maxIterations = 50;
     ps.randomSeed = 42;
     auto cid = DGeomHelpers::EmbedMolecule(*mol, ps);
-    CHECK(cid == 0);
-    CHECK(ps.failures[DGeomHelpers::EmbedFailureCauses::INITIAL_COORDS] == 2);
-    CHECK(ps.failures[DGeomHelpers::EmbedFailureCauses::ETK_MINIMIZATION] == 5);
-
+    CHECK(cid < 0);
+    CHECK(ps.failures[DGeomHelpers::EmbedFailureCauses::INITIAL_COORDS] > 5);
+    CHECK(ps.failures[DGeomHelpers::EmbedFailureCauses::ETK_MINIMIZATION] > 10);
     auto fail_cp = ps.failures;
     // make sure we reset the counts each time
     cid = DGeomHelpers::EmbedMolecule(*mol, ps);
@@ -750,8 +750,8 @@ TEST_CASE("Macrocycle bounds matrix") {
     const auto conf = mol->getConformer(cid);
     RDGeom::Point3D pos_1 = conf.getAtomPos(1);
     RDGeom::Point3D pos_4 = conf.getAtomPos(4);
-    CHECK((pos_1 - pos_4).length() < 3.9);
-    CHECK((pos_1 - pos_4).length() > 3.8);
+    CHECK((pos_1 - pos_4).length() < 3.6);
+    CHECK((pos_1 - pos_4).length() > 3.5);
   }
 }
 
@@ -991,6 +991,31 @@ TEST_CASE("github #7552") {
       REQUIRE(mol);
       MolOps::addHs(*mol);
       CHECK(DGeomHelpers::EmbedMolecule(*mol, ps) == 0);
+    }
+  }
+}
+
+TEST_CASE("No overlapping atoms") {
+  auto ps = DGeomHelpers::ETKDGv3;
+  ps.randomSeed = 1;
+  ps.enableSequentialRandomSeeds = true;
+  auto mol = "COc1cc2cc(OC)c1OCCOC[C@H](C)OC(=O)[C@@H]CNC(=O)[C@H]2"_smiles;
+  REQUIRE(mol);
+  MolOps::addHs(*mol);
+  DistGeom::BoundsMatPtr bm{new DistGeom::BoundsMatrix(mol->getNumAtoms())};
+  DGeomHelpers::initBoundsMat(bm, 0.0, 1000.0);
+  DGeomHelpers::setTopolBounds(*mol, bm, true, false, true);
+  auto cids = DGeomHelpers::EmbedMultipleConfs(*mol, 10, ps);
+  CHECK(cids.size() == 10);
+  for (const auto &cid : cids) {
+    CHECK(cid >= 0);
+    const auto conf = mol->getConformer(cid);
+    for (unsigned int i = 1; i < mol->getNumAtoms(); ++i) {
+      for (unsigned int j = 0; j < i; ++j) {
+        const auto minDist = bm->getLowerBound(i, j);
+        const auto length = (conf.getAtomPos(i) - conf.getAtomPos(j)).length();
+        CHECK((minDist - length) < .37);
+      }
     }
   }
 }
