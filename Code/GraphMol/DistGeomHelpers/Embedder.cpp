@@ -12,7 +12,7 @@
 #include <DistGeom/BoundsMatrix.h>
 #include <DistGeom/DistGeomUtils.h>
 #include <DistGeom/TriangleSmooth.h>
-#include <DistGeom/ChiralViolationContrib.h>
+#include <DistGeom/ChiralViolationContribs.h>
 #include "BoundsMatrixBuilder.h"
 #include <ForceField/ForceField.h>
 #include <GraphMol/ROMol.h>
@@ -545,7 +545,7 @@ bool checkChiralCenters(const RDGeom::PointPtrVect *positions,
                         const EmbedParameters &) {
   // check the chiral volume:
   for (const auto &chiralSet : *eargs.chiralCenters) {
-    double vol = DistGeom::ChiralViolationContrib::calcChiralVolume(
+    double vol = DistGeom::calcChiralVolume(
         chiralSet->d_idx1, chiralSet->d_idx2, chiralSet->d_idx3,
         chiralSet->d_idx4, *positions);
     double lb = chiralSet->getLowerVolumeBound();
@@ -1254,7 +1254,7 @@ bool _isConfFarFromRest(
   RDGeom::Point3DConstPtrVect prbPoints(selfMatches[0].size());
   _fillAtomPositions(refPoints, conf, mol, selfMatches[0]);
 
-  double ssrThres = conf.getNumAtoms() * threshold * threshold;
+  double ssrThres = selfMatches[0].size() * threshold * threshold;
   for (const auto &match : selfMatches) {
     for (auto confi = mol.beginConformers(); confi != mol.endConformers();
          ++confi) {
