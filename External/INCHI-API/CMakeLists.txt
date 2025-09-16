@@ -71,10 +71,10 @@ if(RDK_BUILD_INCHI_SUPPORT)
   endif()
 
      if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-comment -Wno-parentheses -Wno-logical-op-parentheses -Wno-pointer-bool-conversion -Wno-unused-value -Wno-unsequenced -Wno-constant-logical-operand")
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-comment -Wno-parentheses -Wno-logical-op-parentheses -Wno-pointer-bool-conversion -Wno-unused-value -Wno-unsequenced -Wno-constant-logical-operand -D__isascii=isascii")
      endif()
      if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat-overflow=0 -Wformat=0 -Wno-format-security")
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat-overflow=0 -Wformat=0 -Wno-format-security -D__isascii=isascii")
      endif()
 
 
@@ -101,11 +101,13 @@ if(RDK_BUILD_PYTHON_WRAPPERS)
   if(RDK_BUILD_INCHI_SUPPORT)
    add_custom_command(TARGET inchi_support
                   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/python/inchi.py
-                     ${CMAKE_SOURCE_DIR}/rdkit/Chem/inchi.py)
+                     ${CMAKE_SOURCE_DIR}/rdkit/Chem/inchi.py
+                  POST_BUILD)
   else(RDK_BUILD_INCHI_SUPPORT)
     add_custom_command(TARGET inchi_support
                   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/python/noinchi.py
-                     ${CMAKE_SOURCE_DIR}/rdkit/Chem/inchi.py)
+                     ${CMAKE_SOURCE_DIR}/rdkit/Chem/inchi.py
+                  POST_BUILD)
   endif(RDK_BUILD_INCHI_SUPPORT)
   get_directory_property(extra_clean_files ADDITIONAL_MAKE_CLEAN_FILES)
   set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES

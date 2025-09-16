@@ -14,7 +14,13 @@
 #ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
 #define _DEFINED_USE_MATH_DEFINES
+#include <fcntl.h>
+#include <io.h>
+#include <windows.h>
 #endif
+#else
+#include <unistd.h>
+#include <poll.h>
 #endif
 #include <math.h>
 #ifdef _DEFINED_USE_MATH_DEFINES
@@ -772,7 +778,8 @@ void test_modifications() {
   free(ctab);
   free(mpkl);
 
-  mpkl = get_mol("C([H])([H])([H])C([2H])([H])C([H])([H])[H]", &mpkl_size, "{\"removeHs\":false}");
+  mpkl = get_mol("C([H])([H])([H])C([2H])([H])C([H])([H])[H]", &mpkl_size,
+                 "{\"removeHs\":false}");
   smi = get_smiles(mpkl, mpkl_size, NULL);
   assert(!strcmp(smi, "[H]C([H])([H])C([H])([2H])C([H])([H])[H]"));
   free(smi);
@@ -1271,7 +1278,7 @@ void test_standardize() {
   size_t mpkl_size;
   mpkl = get_mol("[Pt]CCN(=O)=O", &mpkl_size, "{\"sanitize\":false}");
   char *smi = get_smiles(mpkl, mpkl_size, "");
-  assert(!strcmp(smi, "O=N(=O)CC[Pt]"));
+  assert(!strcmp(smi, "O=N(=O)C[CH2][Pt]"));
   free(smi);
   assert(cleanup(&mpkl, &mpkl_size, "") > 0);
   smi = get_smiles(mpkl, mpkl_size, "");
@@ -2019,7 +2026,7 @@ M  END\n";
   assert(mpkl);
   assert(mpkl_size > 0);
   char *smiles = get_smiles(mpkl, mpkl_size, NULL);
-  assert(!strcmp(smiles, "F[Pt@SP3](F)(Cl)Cl"));
+  assert(!strcmp(smiles, "[F][Pt@SP3]([F])([Cl])[Cl]"));
   free(smiles);
   free(mpkl);
   allow_non_tetrahedral_chirality(0);
@@ -2027,7 +2034,7 @@ M  END\n";
   assert(mpkl);
   assert(mpkl_size > 0);
   smiles = get_smiles(mpkl, mpkl_size, NULL);
-  assert(!strcmp(smiles, "F[Pt](F)(Cl)Cl"));
+  assert(!strcmp(smiles, "[F][Pt]([F])([Cl])[Cl]"));
   free(smiles);
   free(mpkl);
   allow_non_tetrahedral_chirality(orig_setting);
@@ -2192,22 +2199,180 @@ void test_partial_sanitization() {
   assert(!strstr(mb, "M  CHG"));
   free(mb);
   free(mpkl);
-  mpkl = get_mol("c1ccccc1N(=O)=O", &mpkl_size, "{\"sanitize\":{\"SANITIZE_CLEANUP\":true}}");
+  mpkl = get_mol("c1ccccc1N(=O)=O", &mpkl_size,
+                 "{\"sanitize\":{\"SANITIZE_CLEANUP\":true}}");
   mb = get_molblock(mpkl, mpkl_size, "{\"kekulize\":false}");
   assert(strstr(mb, "  1  2  4  0"));
-  assert((strstr(mb, "  7  8  1  0") && strstr(mb, "  7  9  2  0"))
-    || (strstr(mb, "  7  8  2  0") && strstr(mb, "  7  9  1  0")));
+  assert((strstr(mb, "  7  8  1  0") && strstr(mb, "  7  9  2  0")) ||
+         (strstr(mb, "  7  8  2  0") && strstr(mb, "  7  9  1  0")));
   assert(strstr(mb, "M  CHG  2"));
   free(mb);
   free(mpkl);
-  mpkl = get_mol("c1ccccc1N(=O)=O", &mpkl_size, "{\"sanitize\":{\"SANITIZE_CLEANUP\":true,\"SANITIZE_KEKULIZE\":true}}");
+  mpkl = get_mol(
+      "c1ccccc1N(=O)=O", &mpkl_size,
+      "{\"sanitize\":{\"SANITIZE_CLEANUP\":true,\"SANITIZE_KEKULIZE\":true}}");
   mb = get_molblock(mpkl, mpkl_size, "{\"kekulize\":false}");
   assert(!strstr(mb, "  1  2  4  0"));
-  assert((strstr(mb, "  7  8  1  0") && strstr(mb, "  7  9  2  0"))
-    || (strstr(mb, "  7  8  2  0") && strstr(mb, "  7  9  1  0")));
+  assert((strstr(mb, "  7  8  1  0") && strstr(mb, "  7  9  2  0")) ||
+         (strstr(mb, "  7  8  2  0") && strstr(mb, "  7  9  1  0")));
   assert(strstr(mb, "M  CHG  2"));
   free(mb);
   free(mpkl);
+}
+
+#define PIPE_BUF_SIZE 4096
+#define PIPE_FD_SIZE 2
+#ifdef _WIN32
+#define DUP_FUNC _dup
+#define DUP2_FUNC _dup2
+#define PIPE_FUNC(fds, buf_size) _pipe(fds, buf_size, _O_BINARY)
+#define READ_FUNC _read
+#define FILENO_FUNC _fileno
+#define CLOSE_FUNC _close
+#else
+#define DUP_FUNC dup
+#define DUP2_FUNC dup2
+#define PIPE_FUNC(fds, buf_size) pipe(fds)
+#define READ_FUNC read
+#define FILENO_FUNC fileno
+#define CLOSE_FUNC close
+#endif
+
+typedef struct {
+  int orig_stdout;
+  int orig_stderr;
+  int stdout_pipes[PIPE_FD_SIZE];
+  int stderr_pipes[PIPE_FD_SIZE];
+} CapturedStreams;
+
+void release_streams(CapturedStreams **captured_streams) {
+  size_t i;
+  if (!captured_streams || !*captured_streams) {
+    return;
+  }
+  if ((*captured_streams)->orig_stdout != -1) {
+    fflush(stdout);
+    DUP2_FUNC((*captured_streams)->orig_stdout, FILENO_FUNC(stdout));
+  }
+  if ((*captured_streams)->orig_stderr != -1) {
+    fflush(stderr);
+    DUP2_FUNC((*captured_streams)->orig_stderr, FILENO_FUNC(stderr));
+  }
+  for (i = 0; i < PIPE_FD_SIZE; ++i) {
+    if ((*captured_streams)->stdout_pipes[i] != -1) {
+      CLOSE_FUNC((*captured_streams)->stdout_pipes[i]);
+    }
+    if ((*captured_streams)->stderr_pipes[i] != -1) {
+      CLOSE_FUNC((*captured_streams)->stderr_pipes[i]);
+    }
+  }
+  free(*captured_streams);
+  *captured_streams = NULL;
+}
+
+CapturedStreams *capture_streams(unsigned int buf_size) {
+  CapturedStreams *res;
+  size_t i;
+  res = (CapturedStreams *)malloc(sizeof(CapturedStreams));
+  if (!res) {
+    return NULL;
+  }
+  memset(res, 0, sizeof(CapturedStreams));
+  for (i = 0; i < 2; ++i) {
+    res->stdout_pipes[i] = -1;
+    res->stderr_pipes[i] = -1;
+  }
+  fflush(stdout);
+  fflush(stderr);
+  res->orig_stdout = DUP_FUNC(FILENO_FUNC(stdout));
+  res->orig_stderr = DUP_FUNC(FILENO_FUNC(stderr));
+  if (res->orig_stdout == -1 || res->orig_stderr == -1) {
+    release_streams(&res);
+    return NULL;
+  }
+  if (PIPE_FUNC(res->stdout_pipes, buf_size) == -1 ||
+      PIPE_FUNC(res->stderr_pipes, buf_size) == -1) {
+    release_streams(&res);
+    return NULL;
+  }
+  if (DUP2_FUNC(res->stdout_pipes[1], FILENO_FUNC(stdout)) == -1 ||
+      DUP2_FUNC(res->stderr_pipes[1], FILENO_FUNC(stderr)) == -1) {
+    release_streams(&res);
+    return NULL;
+  }
+  return res;
+}
+
+int can_read(int fd) {
+  int res;
+#ifndef _WIN32
+  struct pollfd pollfd_instance;
+  pollfd_instance.fd = fd;
+  pollfd_instance.events = POLLIN;
+  res = poll(&pollfd_instance, 1, 0);
+  if (res != -1) {
+    res = (pollfd_instance.revents & POLLIN ? 1 : 0);
+  }
+#else
+  HANDLE pipe_handle;
+  DWORD bytes_avail;
+  pipe_handle = (HANDLE)_get_osfhandle(fd);
+  if (pipe_handle == INVALID_HANDLE_VALUE) {
+    return -1;
+  }
+  res = PeekNamedPipe(pipe_handle, NULL, 0, NULL, &bytes_avail, NULL);
+  if (res == 0) {
+    res = -1;
+  } else {
+    res = (bytes_avail > 0 ? 1 : 0);
+  }
+#endif
+  return res;
+}
+
+int non_blocking_read(int fd, void *buf, unsigned int buf_size) {
+  // do not attempt to read if the pipe is empty as the read operation will
+  // block
+  int has_data = can_read(fd);
+  if (has_data == -1) {
+    return -1;
+  }
+  int n_read = 0;
+  if (has_data) {
+    n_read = READ_FUNC(fd, buf, buf_size);
+  }
+  return n_read;
+}
+
+char *_get_capture_buf(int *pipes, unsigned int buf_size) {
+  char *buf;
+  if (!pipes || pipes[0] == -1 || pipes[1] == -1) {
+    return NULL;
+  }
+  if (CLOSE_FUNC(pipes[1]) == -1) {
+    return NULL;
+  }
+  pipes[1] = -1;
+  buf = (char *)malloc(buf_size);
+  if (!buf) {
+    return NULL;
+  }
+  memset(buf, 0, buf_size);
+  // do not attempt to read if the pipe is empty as the read operation will
+  // block
+  if (non_blocking_read(pipes[0], buf, buf_size) == -1) {
+    free(buf);
+    return NULL;
+  }
+  return buf;
+}
+
+char *get_stdout_buf(CapturedStreams *captured_streams, unsigned int buf_size) {
+  return _get_capture_buf(captured_streams->stdout_pipes, buf_size);
+}
+
+char *get_stderr_buf(CapturedStreams *captured_streams, unsigned int buf_size) {
+  return _get_capture_buf(captured_streams->stderr_pipes, buf_size);
 }
 
 void test_capture_logs() {
@@ -2218,41 +2383,118 @@ void test_capture_logs() {
   void *null_handle = NULL;
   size_t mpkl_size;
   void *log_handle;
+  void *log_handle2;
+  const char *PENTAVALENT_CARBON = "CC(C)(C)(C)C";
+  const char *PENTAVALENT_CARBON_VALENCE_ERROR =
+      "Explicit valence for atom # 1 C, 5, is greater than permitted";
+  const char *TETRAVALENT_NITROGEN = "CN(C)(C)C";
+  const char *TETRAVALENT_NITROGEN_VALENCE_ERROR =
+      "Explicit valence for atom # 1 N, 4, is greater than permitted";
+  const size_t BUF_SIZE = PIPE_BUF_SIZE;
+  CapturedStreams *captured_streams;
   typedef struct {
-    const char *type;
     void *(*func)(const char *);
   } capture_test;
-  capture_test tests[] = {{"tee", set_log_tee}, {"capture", set_log_capture}};
+  capture_test tests[] = {{set_log_tee}, {set_log_capture}};
+  assert(disable_logging());
+  assert(!enable_logger("dummy"));
+  assert(enable_logger("rdApp.info"));
+  // Should see no warning on pentavalent carbon below
+  captured_streams = capture_streams(BUF_SIZE);
+  assert(captured_streams);
+  mpkl = get_mol(PENTAVALENT_CARBON, &mpkl_size, "");
+  assert(!mpkl);
+  log_buffer = get_stderr_buf(captured_streams, BUF_SIZE);
+  assert(log_buffer);
+  assert(!log_buffer[0]);
+  free(log_buffer);
+  release_streams(&captured_streams);
+  assert(enable_logger("rdApp.error"));
+  // Should see warning on pentavalent carbon below
+  captured_streams = capture_streams(BUF_SIZE);
+  assert(captured_streams);
+  mpkl = get_mol(PENTAVALENT_CARBON, &mpkl_size, "");
+  assert(!mpkl);
+  log_buffer = get_stderr_buf(captured_streams, BUF_SIZE);
+  assert(log_buffer);
+  assert(strstr(log_buffer, PENTAVALENT_CARBON_VALENCE_ERROR));
+  free(log_buffer);
+  release_streams(&captured_streams);
+  assert(disable_logging());
+  // Should again see no warning on pentavalent carbon below
+  captured_streams = capture_streams(BUF_SIZE);
+  assert(captured_streams);
+  mpkl = get_mol(PENTAVALENT_CARBON, &mpkl_size, "");
+  assert(!mpkl);
+  log_buffer = get_stderr_buf(captured_streams, BUF_SIZE);
+  assert(log_buffer);
+  assert(!log_buffer[0]);
+  free(log_buffer);
+  release_streams(&captured_streams);
   for (size_t i = 0; i < sizeof(tests) / sizeof(capture_test); ++i) {
-    printf("%zu. %s\n", i + 1, tests[i].type);
-    log_handle = tests[i].func("dummy");
-    assert(!log_handle);
+    assert(!get_log_buffer(null_handle));
     log_handle = tests[i].func("rdApp.*");
     assert(log_handle);
-    assert(!get_log_buffer(null_handle));
     log_buffer = get_log_buffer(log_handle);
     assert(log_buffer);
-    assert(!strlen(log_buffer));
+    assert(!log_buffer[0]);
     free(log_buffer);
-    mpkl = get_mol("CN(C)(C)C", &mpkl_size, "");
+    captured_streams = capture_streams(BUF_SIZE);
+    assert(captured_streams);
+    mpkl = get_mol(TETRAVALENT_NITROGEN, &mpkl_size, "");
     assert(!mpkl);
+    log_buffer = get_stderr_buf(captured_streams, BUF_SIZE);
+    assert(log_buffer);
+    assert(tests[i].func == set_log_tee
+               ? !!strstr(log_buffer, TETRAVALENT_NITROGEN_VALENCE_ERROR)
+               : !log_buffer[0]);
+    free(log_buffer);
+    release_streams(&captured_streams);
     log_buffer = get_log_buffer(log_handle);
     assert(log_buffer);
-    assert(strstr(
-        log_buffer,
-        "Explicit valence for atom # 1 N, 4, is greater than permitted"));
+    assert(strstr(log_buffer, TETRAVALENT_NITROGEN_VALENCE_ERROR));
     free(log_buffer);
-    assert(!clear_log_buffer(null_handle));
     assert(clear_log_buffer(log_handle));
     log_buffer = get_log_buffer(log_handle);
     assert(log_buffer);
-    assert(!strlen(log_buffer));
+    assert(!log_buffer[0]);
+    free(log_buffer);
+    log_handle2 = tests[i].func("rdApp.*");
+    assert(!log_handle2);
+    captured_streams = capture_streams(BUF_SIZE);
+    assert(captured_streams);
+    mpkl = get_mol(PENTAVALENT_CARBON, &mpkl_size, "");
+    assert(!mpkl);
+    log_buffer = get_stderr_buf(captured_streams, BUF_SIZE);
+    assert(log_buffer);
+    assert(tests[i].func == set_log_tee
+               ? !!strstr(log_buffer, PENTAVALENT_CARBON_VALENCE_ERROR)
+               : !log_buffer[0]);
+    free(log_buffer);
+    release_streams(&captured_streams);
+    log_buffer = get_log_buffer(log_handle);
+    assert(log_buffer);
+    assert(strstr(log_buffer, PENTAVALENT_CARBON_VALENCE_ERROR));
     free(log_buffer);
     assert(!destroy_log_handle(null_handle));
     assert(!destroy_log_handle(&null_handle));
     assert(destroy_log_handle(&log_handle));
     assert(!log_handle);
+    log_handle2 = tests[i].func("rdApp.*");
+    assert(log_handle2);
+    assert(destroy_log_handle(&log_handle2));
+    assert(!log_handle2);
   }
+  // Should again see no warning on pentavalent carbon below
+  captured_streams = capture_streams(BUF_SIZE);
+  assert(captured_streams);
+  mpkl = get_mol(PENTAVALENT_CARBON, &mpkl_size, "");
+  assert(!mpkl);
+  log_buffer = get_stderr_buf(captured_streams, BUF_SIZE);
+  assert(log_buffer);
+  assert(!log_buffer[0]);
+  free(log_buffer);
+  release_streams(&captured_streams);
 }
 
 void test_relabel_mapped_dummies() {
@@ -2874,6 +3116,788 @@ void test_props() {
   free(mpkl);
 }
 
+void test_get_mol_remove_hs() {
+  printf("--------------------------\n");
+  printf("  get_mol removeHs parameter\n");
+  const char *mb_in =
+      "\n\
+  MJ240300                      \n\
+\n\
+  8  8  0  0  0  0  0  0  0  0999 V2000\n\
+   -1.4955    1.1152    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -2.2099    0.7027    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -2.2099   -0.1223    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -1.4955   -0.5348    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -0.7810   -0.1223    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -0.7810    0.7027    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -0.0666    1.1152    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -2.9244   -0.5348    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+  1  2  2  0  0  0  0\n\
+  2  3  1  0  0  0  0\n\
+  3  4  2  0  0  0  0\n\
+  4  5  1  0  0  0  0\n\
+  5  6  2  0  0  0  0\n\
+  6  1  1  0  0  0  0\n\
+  6  7  1  0  0  0  0\n\
+  3  8  1  0  0  0  0\n\
+M  ISO  1   7   2\n\
+M  END\n\
+";
+  const char *no_details = "";
+  const char *removehs_true = "{\"removeHs\":true}";
+  const char *removehs_false = "{\"removeHs\":false}";
+  const char *deuterium_coords =
+      "  -0.0666    1.1152    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0";
+  const char *hydrogen_coords =
+      "  -2.9244   -0.5348    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0";
+  char *mpkl;
+  size_t mpkl_size;
+  char *mb_out;
+  char *smi_out;
+  char *jb = NULL;
+  char *smi = NULL;
+  for (int i = 0; i < 2; ++i) {
+    mpkl = get_mol(mb_in, &mpkl_size, i ? removehs_false : no_details);
+    assert(mpkl && mpkl_size);
+    mb_out = get_molblock(mpkl, mpkl_size, NULL);
+    assert(mb_out);
+    assert(strstr(mb_out, deuterium_coords));
+    assert(strstr(mb_out, hydrogen_coords));
+    free(mb_out);
+    if (!smi) {
+      smi = get_smiles(mpkl, mpkl_size, NULL);
+      assert(smi);
+    }
+    if (!jb) {
+      jb = get_json(mpkl, mpkl_size, NULL);
+      assert(jb);
+    }
+    free(mpkl);
+  }
+  mpkl = get_mol(mb_in, &mpkl_size, removehs_true);
+  assert(mpkl && mpkl_size);
+  mb_out = get_molblock(mpkl, mpkl_size, NULL);
+  assert(mb_out);
+  assert(strstr(mb_out, deuterium_coords));
+  assert(!strstr(mb_out, hydrogen_coords));
+  free(mb_out);
+  free(mpkl);
+  for (int i = 0; i < 2; ++i) {
+    mpkl = get_mol(jb, &mpkl_size, i ? removehs_false : no_details);
+    assert(mpkl && mpkl_size);
+    mb_out = get_molblock(mpkl, mpkl_size, NULL);
+    assert(mb_out);
+    assert(strstr(mb_out, deuterium_coords));
+    assert(strstr(mb_out, hydrogen_coords));
+    free(mb_out);
+    free(mpkl);
+  }
+  mpkl = get_mol(jb, &mpkl_size, removehs_true);
+  assert(mpkl && mpkl_size);
+  mb_out = get_molblock(mpkl, mpkl_size, NULL);
+  assert(mb_out);
+  assert(strstr(mb_out, deuterium_coords));
+  assert(!strstr(mb_out, hydrogen_coords));
+  free(mb_out);
+  free(jb);
+  free(mpkl);
+  for (int i = 0; i < 2; ++i) {
+    mpkl = get_mol(smi, &mpkl_size, i ? removehs_true : no_details);
+    assert(mpkl && mpkl_size);
+    smi_out = get_smiles(mpkl, mpkl_size, NULL);
+    assert(smi_out);
+    assert(strstr(smi_out, "[2H]"));
+    assert(!strstr(smi_out, "[H]"));
+    free(smi_out);
+    free(mpkl);
+  }
+  mpkl = get_mol(smi, &mpkl_size, removehs_false);
+  assert(mpkl && mpkl_size);
+  smi_out = get_smiles(mpkl, mpkl_size, NULL);
+  assert(smi_out);
+  assert(strstr(smi_out, "[2H]"));
+  assert(strstr(smi_out, "[H]"));
+  free(smi_out);
+  free(smi);
+  free(mpkl);
+}
+
+size_t _read_png_blob(FILE *hnd, char **png_blob) {
+  assert(hnd && png_blob);
+  static const size_t PNG_BUF_LEN = 65536;
+  size_t read_count;
+  size_t png_blob_sz;
+  *png_blob = NULL;
+  png_blob_sz = 0;
+  read_count = PNG_BUF_LEN;
+  while (read_count == PNG_BUF_LEN) {
+    *png_blob = (char *)realloc(*png_blob, PNG_BUF_LEN);
+    assert(*png_blob);
+    read_count = fread(&(*png_blob)[png_blob_sz], 1, PNG_BUF_LEN, hnd);
+    png_blob_sz += read_count;
+  }
+  return png_blob_sz;
+}
+
+size_t _write_png_blob(FILE *hnd, char *png_blob, size_t png_blob_sz) {
+  assert(hnd && png_blob);
+  return fwrite(png_blob, 1, png_blob_sz, hnd);
+}
+
+void test_png_metadata() {
+  printf("--------------------------\n");
+  printf("  test_png_metadata\n");
+#ifdef WIN32
+#define char_type_len wcslen
+  typedef wchar_t char_type;
+  const char_type *PNG_COLCHICINE_NO_METADATA =
+      L"\\Code\\GraphMol\\FileParsers\\test_data\\colchicine.no_metadata.png";
+  const char_type *PNG_COLCHICINE_WITH_METADATA =
+      L"\\Code\\GraphMol\\FileParsers\\test_data\\colchicine.png";
+  const char_type *PNG_PENICILLIN_METADATA = L"penicillin_metadata.png";
+#else
+#define char_type_len strlen
+  typedef char char_type;
+  const char_type *PNG_COLCHICINE_NO_METADATA =
+      "/Code/GraphMol/FileParsers/test_data/colchicine.no_metadata.png";
+  const char_type *PNG_COLCHICINE_WITH_METADATA =
+      "/Code/GraphMol/FileParsers/test_data/colchicine.png";
+  const char_type *PNG_PENICILLIN_METADATA = "penicillin_metadata.png";
+#endif
+  const char *BENZYLPENICILLIN_SMI =
+      "CC1([C@@H](N2[C@H](S1)[C@@H](C2=O)NC(=O)Cc3ccccc3)C(=O)O)C";
+  const char *BENZYLPENICILLIN_CAN_SMI =
+      "CC1(C)S[C@@H]2[C@H](NC(=O)Cc3ccccc3)C(=O)N2[C@H]1C(=O)O";
+  const char *AMOXICILLIN_SMI =
+      "O=C(O)[C@@H]2N3C(=O)[C@@H](NC(=O)[C@@H](c1ccc(O)cc1)N)[C@H]3SC2(C)C";
+  const char *AMOXICILLIN_CAN_SMI =
+      "CC1(C)S[C@@H]2[C@H](NC(=O)[C@H](N)c3ccc(O)cc3)C(=O)N2[C@H]1C(=O)O";
+  const char *PNG_PENICILLIN_AMOXICILLIN_METADATA =
+      "penicillin_amoxicillin_metadata.png";
+  const char *PNG_COLCHICINE_AMOXICILLIN_METADATA =
+      "colchicine_amoxicillin_metadata.png";
+  const char *COLCHICINE = "COc1cc2c(c(OC)c1OC)-c1ccc(OC)c(=O)cc1[C@@H](NC(C)=O)CC2";
+  const char *COLCHICINE_UNUSUAL_WEDGING = "\n\
+     RDKit          2D\n\
+\n\
+ 29 31  0  0  0  0  0  0  0  0999 V2000\n\
+    6.4602    1.0300    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    5.3062    1.9883    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    3.8993    1.4680    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    2.7453    2.4262    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    1.3384    1.9059    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    1.0856    0.4273    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    2.2396   -0.5309    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    1.9868   -2.0094    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    3.1408   -2.9677    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    3.6465   -0.0106    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    4.8005   -0.9688    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    4.5477   -2.4474    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -0.2280   -0.2968    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    0.1857   -1.7387    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -0.6836   -2.9611    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -2.1813   -3.0436    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -2.7569   -4.4288    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -4.2442   -4.6230    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -3.1797   -1.9240    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -4.6215   -2.3378    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -2.9268   -0.4455    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -1.6132    0.2787    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -2.0269    1.7205    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -3.5055    1.9733    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -4.0258    3.3802    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -5.5043    3.6330    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -3.0675    4.5342    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -1.1576    2.9429    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    0.3401    3.0254    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+  1  2  1  0\n\
+  2  3  1  0\n\
+  3  4  2  0\n\
+  4  5  1  0\n\
+  5  6  2  0\n\
+  6  7  1  0\n\
+  7  8  1  0\n\
+  8  9  1  0\n\
+  7 10  2  0\n\
+ 10 11  1  0\n\
+ 11 12  1  0\n\
+  6 13  1  0\n\
+ 13 14  2  0\n\
+ 14 15  1  0\n\
+ 15 16  2  0\n\
+ 16 17  1  0\n\
+ 17 18  1  0\n\
+ 16 19  1  0\n\
+ 19 20  2  0\n\
+ 19 21  1  0\n\
+ 21 22  2  0\n\
+ 23 22  1  1\n\
+ 23 24  1  0\n\
+ 24 25  1  0\n\
+ 25 26  1  0\n\
+ 25 27  2  0\n\
+ 23 28  1  0\n\
+ 28 29  1  0\n\
+ 10  3  1  0\n\
+ 22 13  1  0\n\
+ 29  5  1  0\n\
+M  END\n";
+  char *penicillin_pkl;
+  size_t penicillin_pkl_sz;
+  char *amoxicillin_pkl;
+  size_t amoxicillin_pkl_sz;
+  char *colchicine_pkl;
+  size_t colchicine_pkl_sz;
+  const char *PROPERTY_NAME = "property";
+  const char *PROPERTY_VALUE = "value";
+  char_type *rdbase;
+  char_type *png_no_metadata_abspath;
+  char_type *png_with_metadata_abspath;
+  char *png_no_metadata_blob;
+  char *png_no_metadata_blob2;
+  char *png_with_metadata_blob;
+  char *prop;
+  char *smi;
+  char *molblock;
+  FILE *hnd_no_metadata;
+  FILE *hnd_with_metadata;
+  size_t rdbase_len;
+  size_t png_no_metadata_len;
+  size_t png_with_metadata_len;
+  size_t png_penicillin_metadata_len;
+  size_t png_penicillin_amoxicillin_metadata_len;
+  size_t png_colchicine_amoxicillin_metadata_len;
+  size_t png_no_metadata_abspath_maxlen;
+  size_t png_with_metadata_abspath_maxlen;
+  size_t png_no_metadata_blob_sz;
+  size_t png_no_metadata_blob2_sz;
+  size_t png_with_metadata_blob_sz;
+  size_t _read_png_blob(FILE * hnd, char **png_blob);
+  size_t _write_png_blob(FILE * hnd, char *png_blob, size_t png_blob_sz);
+  short res;
+  void *null_ptr = NULL;
+#ifdef WIN32
+  rdbase = _wgetenv(L"RDBASE");
+#else
+  rdbase = getenv("RDBASE");
+#endif
+  assert(rdbase);
+  rdbase_len = char_type_len(rdbase);
+  png_no_metadata_len = char_type_len(PNG_COLCHICINE_NO_METADATA);
+  png_with_metadata_len = char_type_len(PNG_COLCHICINE_WITH_METADATA);
+  png_penicillin_metadata_len = strlen(PNG_PENICILLIN_METADATA);
+  png_penicillin_amoxicillin_metadata_len =
+      strlen(PNG_PENICILLIN_AMOXICILLIN_METADATA);
+  png_colchicine_amoxicillin_metadata_len =
+      strlen(PNG_COLCHICINE_AMOXICILLIN_METADATA);
+  char *mpkl;
+  size_t mpkl_sz;
+  char *mpkl_san;
+  size_t mpkl_san_sz;
+  char **mpkl_array;
+  char *fp;
+  size_t *mpkl_sz_array;
+  size_t i;
+  png_no_metadata_abspath_maxlen = rdbase_len + png_no_metadata_len + 1;
+  png_no_metadata_abspath =
+      (char_type *)malloc(png_no_metadata_abspath_maxlen * sizeof(char_type));
+  assert(png_no_metadata_abspath);
+  png_with_metadata_abspath_maxlen = rdbase_len + png_with_metadata_len + 1;
+  png_with_metadata_abspath =
+      (char_type *)malloc(png_with_metadata_abspath_maxlen * sizeof(char_type));
+  assert(png_with_metadata_abspath);
+#ifdef WIN32
+  _snwprintf(png_no_metadata_abspath, png_no_metadata_abspath_maxlen,
+             L"%s%s", rdbase, PNG_COLCHICINE_NO_METADATA);
+  _snwprintf(png_with_metadata_abspath, png_with_metadata_abspath_maxlen,
+             L"%s%s", rdbase, PNG_COLCHICINE_WITH_METADATA);
+  hnd_no_metadata = _wfopen(png_no_metadata_abspath, L"rb");
+  hnd_with_metadata = _wfopen(png_with_metadata_abspath, L"rb");
+#else
+  snprintf(png_no_metadata_abspath, png_no_metadata_abspath_maxlen, "%s%s",
+           rdbase, PNG_COLCHICINE_NO_METADATA);
+  snprintf(png_with_metadata_abspath, png_with_metadata_abspath_maxlen, "%s%s",
+           rdbase, PNG_COLCHICINE_WITH_METADATA);
+  hnd_no_metadata = fopen(png_no_metadata_abspath, "rb");
+  hnd_with_metadata = fopen(png_with_metadata_abspath, "rb");
+#endif
+  assert(hnd_no_metadata);
+  png_no_metadata_blob_sz =
+      _read_png_blob(hnd_no_metadata, &png_no_metadata_blob);
+  fclose(hnd_no_metadata);
+  free(png_no_metadata_abspath);
+  assert(png_no_metadata_blob_sz);
+  png_no_metadata_blob2 = (char *)malloc(png_no_metadata_blob_sz);
+  assert(png_no_metadata_blob2);
+  memcpy(png_no_metadata_blob2, png_no_metadata_blob, png_no_metadata_blob_sz);
+  png_no_metadata_blob2_sz = png_no_metadata_blob_sz;
+  assert(hnd_with_metadata);
+  png_with_metadata_blob_sz =
+      _read_png_blob(hnd_with_metadata, &png_with_metadata_blob);
+  fclose(hnd_with_metadata);
+  free(png_with_metadata_abspath);
+  assert(png_with_metadata_blob_sz);
+  assert(!get_mol_from_png_blob(NULL, png_no_metadata_blob_sz, &mpkl, &mpkl_sz,
+                                NULL));
+  assert(
+      !get_mol_from_png_blob(png_no_metadata_blob, 0, &mpkl, &mpkl_sz, NULL));
+  assert(!get_mol_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                NULL, &mpkl_sz, NULL));
+  assert(!get_mol_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                &mpkl, NULL, NULL));
+  assert(!get_mol_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                &mpkl, &mpkl_sz, NULL));
+  assert(!get_mol_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                &mpkl, &mpkl_sz, ""));
+  assert(!get_mols_from_png_blob(NULL, png_no_metadata_blob_sz, &mpkl_array,
+                                 &mpkl_sz_array, NULL));
+  assert(!get_mols_from_png_blob(png_no_metadata_blob, 0, &mpkl_array,
+                                 &mpkl_sz_array, NULL));
+  assert(!get_mols_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                 NULL, &mpkl_sz_array, NULL));
+  assert(!get_mols_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                 &mpkl_array, NULL, NULL));
+  assert(!get_mols_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                 &mpkl_array, &mpkl_sz_array, NULL));
+  assert(!get_mols_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                 &mpkl_array, &mpkl_sz_array, ""));
+  penicillin_pkl = NULL;
+  penicillin_pkl_sz = 0;
+  penicillin_pkl = get_mol(BENZYLPENICILLIN_SMI, &penicillin_pkl_sz, "");
+  assert(penicillin_pkl && penicillin_pkl_sz);
+  assert(set_2d_coords(&penicillin_pkl, &penicillin_pkl_sz));
+  assert(penicillin_pkl && penicillin_pkl_sz);
+  assert(!add_mol_to_png_blob(NULL, &png_no_metadata_blob_sz, penicillin_pkl,
+                              penicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob((char **)&null_ptr, &png_no_metadata_blob_sz,
+                              penicillin_pkl, penicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob(&png_no_metadata_blob, NULL, penicillin_pkl,
+                              penicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob(&png_no_metadata_blob, &png_no_metadata_blob_sz,
+                              NULL, penicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob(&png_no_metadata_blob, &png_no_metadata_blob_sz,
+                              penicillin_pkl, 0, NULL));
+  assert(add_mol_to_png_blob(&png_no_metadata_blob, &png_no_metadata_blob_sz,
+                             penicillin_pkl, penicillin_pkl_sz, "{\"includePkl\":false,\"includeSmiles\":true,\"includeMol\":true}"));
+  hnd_with_metadata = fopen(PNG_PENICILLIN_METADATA, "wb");
+  assert(hnd_with_metadata);
+  assert(_write_png_blob(hnd_with_metadata, png_no_metadata_blob,
+                         png_no_metadata_blob_sz) == png_no_metadata_blob_sz);
+  fclose(hnd_with_metadata);
+  mpkl = NULL;
+  mpkl_sz = 0;
+  assert(get_mol_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                               &mpkl, &mpkl_sz, ""));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  free(mpkl);
+  mpkl = NULL;
+  mpkl_sz = 0;
+  assert(get_mol_from_png_blob(png_with_metadata_blob,
+                               png_with_metadata_blob_sz, &mpkl, &mpkl_sz, ""));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  free(mpkl);
+  mpkl_array = NULL;
+  mpkl_sz_array = NULL;
+  assert(!get_mols_from_png_blob(png_with_metadata_blob,
+                                png_with_metadata_blob_sz, &mpkl_array,
+                                &mpkl_sz_array, ""));
+  assert(!get_mols_from_png_blob(png_with_metadata_blob,
+                                png_with_metadata_blob_sz, &mpkl_array,
+                                &mpkl_sz_array, "{\"includePkl\":true,\"includeSmiles\":true}"));
+  assert(get_mols_from_png_blob(png_with_metadata_blob,
+                                png_with_metadata_blob_sz, &mpkl_array,
+                                &mpkl_sz_array, "{\"includeSmiles\":true}") == 1);
+  i = 0;
+  while (mpkl_array[i]) {
+    ++i;
+  }
+  assert(i == 1);
+  i = 0;
+  while (mpkl_sz_array[i]) {
+    ++i;
+  }
+  assert(i == 1);
+  free_mol_array(&mpkl_array, &mpkl_sz_array);
+  assert(!mpkl_array && !mpkl_sz_array);
+  free_mol_array(&mpkl_array, &mpkl_sz_array);
+  assert(!mpkl_array && !mpkl_sz_array);
+  mpkl = NULL;
+  mpkl_sz = 0;
+  assert(!get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz,
+      "{\"includePkl\":true,\"includeSmiles\":false,\"includeMol\":false}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz,
+      "{\"includePkl\":false,\"includeSmiles\":false,\"includeMol\":true,\"sanitize\":false,\"removeHs\":false,\"assignStereo\":false,\"fastFindRings\":false}"));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  smi = get_smiles(mpkl, mpkl_sz, "");
+  free(mpkl);
+  assert(smi);
+  assert(strcmp(smi, BENZYLPENICILLIN_CAN_SMI));
+  mpkl_san = get_mol(smi, &mpkl_san_sz, "");
+  free(smi);
+  assert(mpkl_san && mpkl_san_sz);
+  smi = get_smiles(mpkl_san, mpkl_san_sz, "");
+  assert(!strcmp(smi, BENZYLPENICILLIN_CAN_SMI));
+  free(smi);
+  free(mpkl_san);
+  mpkl = NULL;
+  mpkl_sz = 0;
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  png_no_metadata_blob_sz = png_no_metadata_blob2_sz;
+  assert(!get_mol_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                &mpkl, &mpkl_sz, ""));
+  free(penicillin_pkl);
+  penicillin_pkl = NULL;
+  penicillin_pkl_sz = 0;
+  penicillin_pkl = get_mol(BENZYLPENICILLIN_SMI, &penicillin_pkl_sz, "");
+  assert(penicillin_pkl && penicillin_pkl_sz);
+  amoxicillin_pkl = NULL;
+  amoxicillin_pkl_sz = 0;
+  amoxicillin_pkl = get_mol(AMOXICILLIN_SMI, &amoxicillin_pkl_sz, "");
+  assert(amoxicillin_pkl && amoxicillin_pkl_sz);
+  assert(set_2d_coords(&amoxicillin_pkl, &amoxicillin_pkl_sz));
+  assert(amoxicillin_pkl && amoxicillin_pkl_sz);
+  assert(add_mol_to_png_blob(&png_no_metadata_blob, &png_no_metadata_blob_sz,
+                             penicillin_pkl, penicillin_pkl_sz,
+                             "{\"includePkl\":false,\"includeMol\":true,\"CX_ALL_BUT_COORDS\":true}"));
+  assert(add_mol_to_png_blob(&png_no_metadata_blob, &png_no_metadata_blob_sz,
+                             amoxicillin_pkl, amoxicillin_pkl_sz,
+                             "{\"includePkl\":false,\"includeMol\":true,\"CX_ALL_BUT_COORDS\":true}"));
+  hnd_with_metadata = fopen(PNG_PENICILLIN_AMOXICILLIN_METADATA, "wb");
+  assert(hnd_with_metadata);
+  assert(_write_png_blob(hnd_with_metadata, png_no_metadata_blob,
+                         png_no_metadata_blob_sz) == png_no_metadata_blob_sz);
+  fclose(hnd_with_metadata);
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz,
+      "{\"sanitize\":false,\"removeHs\":false,\"assignStereo\":false,\"fastFindRings\":false}"));
+  assert(mpkl && mpkl_sz);
+  assert(!has_coords(mpkl, mpkl_sz));
+  smi = get_smiles(mpkl, mpkl_sz, "");
+  assert(smi);
+  assert(!strcmp(smi, BENZYLPENICILLIN_CAN_SMI));
+  free(smi);
+  free(mpkl);
+  mpkl = NULL;
+  mpkl_sz = 0;
+  assert(!get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz,
+      "{\"includePkl\":false,\"includeSmiles\":false,\"includeMol\":false}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz,
+      "{\"includePkl\":true,\"includeSmiles\":false,\"includeMol\":true}"));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  smi = get_smiles(mpkl, mpkl_sz, "");
+  assert(smi);
+  assert(!strcmp(smi, BENZYLPENICILLIN_CAN_SMI));
+  free(smi);
+  free(mpkl);
+  mpkl_array = NULL;
+  mpkl_sz_array = NULL;
+  assert(!get_mols_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                &mpkl_array, &mpkl_sz_array, ""));
+  assert(get_mols_from_png_blob(png_no_metadata_blob, png_no_metadata_blob_sz,
+                                &mpkl_array, &mpkl_sz_array, "{\"includeSmiles\":true}") == 2);
+  i = 0;
+  while (mpkl_array[i]) {
+    ++i;
+  }
+  assert(i == 2);
+  i = 0;
+  while (mpkl_sz_array[i]) {
+    ++i;
+  }
+  assert(i == 2);
+  assert(!has_coords(mpkl_array[0], mpkl_sz_array[0]));
+  smi = get_smiles(mpkl_array[0], mpkl_sz_array[0], "");
+  assert(smi);
+  assert(!strcmp(smi, BENZYLPENICILLIN_CAN_SMI));
+  free(smi);
+  fp = get_morgan_fp(mpkl_array[0], mpkl_sz_array[0], "");
+  assert(fp);
+  free(fp);
+  assert(!has_coords(mpkl_array[1], mpkl_sz_array[1]));
+  smi = get_smiles(mpkl_array[1], mpkl_sz_array[1], "");
+  assert(smi);
+  assert(!strcmp(smi, AMOXICILLIN_CAN_SMI));
+  free(smi);
+  fp = get_morgan_fp(mpkl_array[1], mpkl_sz_array[1], "");
+  assert(fp);
+  free(fp);
+  free_mol_array(&mpkl_array, &mpkl_sz_array);
+  assert(!mpkl_array && !mpkl_sz_array);
+  free_mol_array(&mpkl_array, &mpkl_sz_array);
+  assert(!mpkl_array && !mpkl_sz_array);
+  assert(
+      get_mols_from_png_blob(
+          png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl_array,
+          &mpkl_sz_array,
+          "{\"includePkl\":false,\"includeMol\":true,\"sanitize\":false,\"removeHs\":false,\"assignStereo\":false,\"fastFindRings\":false}") ==
+      2);
+  i = 0;
+  while (mpkl_array[i]) {
+    ++i;
+  }
+  assert(i == 2);
+  i = 0;
+  while (mpkl_sz_array[i]) {
+    ++i;
+  }
+  assert(i == 2);
+  assert(has_coords(mpkl_array[0], mpkl_sz_array[0]) == 2);
+  smi = get_smiles(mpkl_array[0], mpkl_sz_array[0], "");
+  assert(smi);
+  assert(strcmp(smi, BENZYLPENICILLIN_CAN_SMI));
+  mpkl_san = get_mol(smi, &mpkl_san_sz, "");
+  free(smi);
+  assert(mpkl_san && mpkl_san_sz);
+  smi = get_smiles(mpkl_san, mpkl_san_sz, "");
+  assert(!strcmp(smi, BENZYLPENICILLIN_CAN_SMI));
+  free(smi);
+  free(mpkl_san);
+  assert(has_coords(mpkl_array[1], mpkl_sz_array[1]) == 2);
+  smi = get_smiles(mpkl_array[1], mpkl_sz_array[1], "");
+  assert(smi);
+  assert(strcmp(smi, AMOXICILLIN_CAN_SMI));
+  mpkl_san = get_mol(smi, &mpkl_san_sz, "");
+  free(smi);
+  assert(mpkl_san && mpkl_san_sz);
+  smi = get_smiles(mpkl_san, mpkl_san_sz, "");
+  assert(!strcmp(smi, AMOXICILLIN_CAN_SMI));
+  free(smi);
+  free(mpkl_san);
+  free_mol_array(&mpkl_array, &mpkl_sz_array);
+  assert(!mpkl_array && !mpkl_sz_array);
+  assert(!add_mol_to_png_blob(NULL, &png_with_metadata_blob_sz, amoxicillin_pkl,
+                              amoxicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob((char **)&null_ptr, &png_with_metadata_blob_sz,
+                              amoxicillin_pkl, amoxicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob(&png_with_metadata_blob, NULL, amoxicillin_pkl,
+                              amoxicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob(&png_with_metadata_blob,
+                              &png_with_metadata_blob_sz, NULL,
+                              amoxicillin_pkl_sz, NULL));
+  assert(!add_mol_to_png_blob(&png_with_metadata_blob,
+                              &png_with_metadata_blob_sz, amoxicillin_pkl, 0,
+                              NULL));
+  assert(add_mol_to_png_blob(
+      &png_with_metadata_blob, &png_with_metadata_blob_sz, amoxicillin_pkl,
+      amoxicillin_pkl_sz, "{\"includeMol\":true,\"CX_ALL_BUT_COORDS\":true}"));
+  hnd_with_metadata = fopen(PNG_COLCHICINE_AMOXICILLIN_METADATA, "wb");
+  assert(hnd_with_metadata);
+  assert(_write_png_blob(hnd_with_metadata, png_with_metadata_blob,
+                         png_with_metadata_blob_sz) ==
+         png_with_metadata_blob_sz);
+  fclose(hnd_with_metadata);
+  assert(get_mols_from_png_blob(
+             png_with_metadata_blob, png_with_metadata_blob_sz, &mpkl_array,
+             &mpkl_sz_array,
+             "{\"includePkl\":false,\"includeMol\":true}") == 1);
+  i = 0;
+  while (mpkl_array[i]) {
+    ++i;
+  }
+  assert(i == 1);
+  i = 0;
+  while (mpkl_sz_array[i]) {
+    ++i;
+  }
+  assert(i == 1);
+  assert(has_coords(mpkl_array[0], mpkl_sz_array[0]) == 2);
+  free_mol_array(&mpkl_array, &mpkl_sz_array);
+  assert(!mpkl_array && !mpkl_sz_array);
+  assert(get_mols_from_png_blob(
+             png_with_metadata_blob, png_with_metadata_blob_sz, &mpkl_array,
+             &mpkl_sz_array, "{\"includeSmiles\":true}") == 2);
+  i = 0;
+  while (mpkl_array[i]) {
+    ++i;
+  }
+  assert(i == 2);
+  i = 0;
+  while (mpkl_sz_array[i]) {
+    ++i;
+  }
+  assert(i == 2);
+  assert(has_coords(mpkl_array[0], mpkl_sz_array[0]) == 2);
+  assert(!has_coords(mpkl_array[1], mpkl_sz_array[1]));
+  free_mol_array(&mpkl_array, &mpkl_sz_array);
+  assert(!mpkl_array && !mpkl_sz_array);
+  free(penicillin_pkl);
+  free(amoxicillin_pkl);
+  free(png_with_metadata_blob);
+
+  colchicine_pkl = get_mol(COLCHICINE, &colchicine_pkl_sz, "");
+  assert(colchicine_pkl && colchicine_pkl_sz);
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, NULL));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(!has_coords(mpkl, mpkl_sz));
+  free(mpkl);
+  // use SMILES
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":false}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(!has_coords(mpkl, mpkl_sz));
+  free(mpkl);
+  // use MOL
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":false,\"includeSmiles\":false,\"includeMol\":true}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  free(mpkl);
+  // use PKL
+  set_2d_coords(&colchicine_pkl, &colchicine_pkl_sz);
+  assert(has_coords(colchicine_pkl, colchicine_pkl_sz) == 2);
+  set_prop(&colchicine_pkl, &colchicine_pkl_sz, PROPERTY_NAME, PROPERTY_VALUE, 0);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":true,\"includeSmiles\":false,\"includeMol\":false,\"propertyFlags\":{\"NoProps\":true}}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  assert(!has_prop(mpkl, mpkl_sz, PROPERTY_NAME));
+  free(mpkl);
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":true,\"includeSmiles\":false,\"includeMol\":false,\"propertyFlags\":{\"AllProps\":true}}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  assert(has_prop(mpkl, mpkl_sz, PROPERTY_NAME));
+  prop = get_prop(mpkl, mpkl_sz, PROPERTY_NAME);
+  assert(prop);
+  assert(!strcmp(prop, PROPERTY_VALUE));
+  free(prop);
+  free(mpkl);
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":false,\"includeSmiles\":true,\"includeMol\":false,\"propertyFlags\":{\"NoProps\":true},\"CX_ALL_BUT_COORDS\":true}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(!has_coords(mpkl, mpkl_sz));
+  assert(!has_prop(mpkl, mpkl_sz, PROPERTY_NAME));
+  free(mpkl);
+  free(colchicine_pkl);
+  // use original wedging
+  colchicine_pkl = get_mol(COLCHICINE_UNUSUAL_WEDGING, &colchicine_pkl_sz, "");
+  assert(colchicine_pkl);
+  assert(has_coords(colchicine_pkl, colchicine_pkl_sz) == 2);
+  smi = get_cxsmiles(colchicine_pkl, colchicine_pkl_sz, "");
+  assert(smi);
+  assert(strstr(smi, "wU:22.24|"));
+  free(smi);
+  smi = get_cxsmiles(colchicine_pkl, colchicine_pkl_sz, "{\"CX_ALL\":true,\"restoreBondDirOption\":\"RestoreBondDirOptionTrue\"}");
+  assert(smi);
+  assert(strstr(smi, "wU:22.23|"));
+  free(smi);
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":true,\"includeSmiles\":true,\"includeMol\":true,\"propertyFlags\":{\"AtomProps\":true,\"BondProps\":true}}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  smi = get_cxsmiles(mpkl, mpkl_sz, "{\"CX_ALL\":true,\"restoreBondDirOption\":\"RestoreBondDirOptionTrue\"}");
+  assert(smi);
+  assert(strstr(smi, "wU:22.23|"));
+  free(smi);
+  smi = get_cxsmiles(mpkl, mpkl_sz, "{\"CX_ALL\":true,\"restoreBondDirOption\":\"RestoreBondDirOptionClear\"}");
+  assert(smi);
+  assert(strstr(smi, "wU:22.24|"));
+  free(smi);
+  molblock = get_molblock(mpkl, mpkl_sz, "");
+  assert(molblock);
+  assert(strstr(molblock, " 23 24  1  1"));
+  free(molblock);
+  molblock = get_molblock(mpkl, mpkl_sz, "{\"useMolBlockWedging\":true}");
+  assert(molblock);
+  assert(strstr(molblock, " 23 22  1  1"));
+  free(molblock);
+  free(mpkl);
+  // the mol is restored from CXSMILES, so it will not retain
+  // original molblock wedging, as it was not stored in the CXSMILES string
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":false,\"includeSmiles\":true,\"includeMol\":true,\"propertyFlags\":{\"AtomProps\":true,\"BondProps\":true}}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  smi = get_cxsmiles(mpkl, mpkl_sz, "{\"CX_ALL\":true,\"restoreBondDirOption\":\"RestoreBondDirOptionTrue\"}");
+  assert(smi);
+  assert(strstr(smi, "wU:22.24|"));
+  free(smi);
+  smi = get_cxsmiles(mpkl, mpkl_sz, "{\"CX_ALL\":true,\"restoreBondDirOption\":\"RestoreBondDirOptionClear\"}");
+  assert(smi);
+  assert(strstr(smi, "wU:22.24|"));
+  free(smi);
+  molblock = get_molblock(mpkl, mpkl_sz, "");
+  assert(molblock);
+  assert(strstr(molblock, " 23 24  1  1"));
+  free(molblock);
+  molblock = get_molblock(mpkl, mpkl_sz, "{\"useMolBlockWedging\":true}");
+  assert(molblock);
+  assert(strstr(molblock, " 23 24  1  1"));
+  free(molblock);
+  free(mpkl);
+  // the mol is restored from CXSMILES, but restoreBondDirOption was set
+  // to 'RestoreBondDirOptionTrue', so it will not retain
+  // original molblock wedging, as it was stored in the CXSMILES string
+  memcpy(png_no_metadata_blob, png_no_metadata_blob2, png_no_metadata_blob2_sz);
+  assert(add_mol_to_png_blob(
+      &png_no_metadata_blob, &png_no_metadata_blob_sz, colchicine_pkl,
+      colchicine_pkl_sz, "{\"includePkl\":false,\"includeSmiles\":true,\"includeMol\":true,\"propertyFlags\":{\"AtomProps\":true,\"BondProps\":true},\"restoreBondDirOption\":\"RestoreBondDirOptionTrue\"}"));
+  assert(get_mol_from_png_blob(
+      png_no_metadata_blob, png_no_metadata_blob_sz, &mpkl, &mpkl_sz, NULL));
+  assert(mpkl && mpkl_sz);
+  assert(has_coords(mpkl, mpkl_sz) == 2);
+  smi = get_cxsmiles(mpkl, mpkl_sz, "{\"CX_ALL\":true,\"restoreBondDirOption\":\"RestoreBondDirOptionTrue\"}");
+  assert(smi);
+  assert(strstr(smi, "wU:22.23|"));
+  free(smi);
+  smi = get_cxsmiles(mpkl, mpkl_sz, "{\"CX_ALL\":true,\"restoreBondDirOption\":\"RestoreBondDirOptionClear\"}");
+  assert(smi);
+  assert(strstr(smi, "wU:22.24|"));
+  free(smi);
+  molblock = get_molblock(mpkl, mpkl_sz, "");
+  assert(molblock);
+  assert(strstr(molblock, " 23 22  1  1"));
+  free(molblock);
+  molblock = get_molblock(mpkl, mpkl_sz, "{\"useMolBlockWedging\":true}");
+  assert(molblock);
+  assert(strstr(molblock, " 23 22  1  1"));
+  free(molblock);
+  free(mpkl);
+  free(colchicine_pkl);
+  free(png_no_metadata_blob);
+  free(png_no_metadata_blob2);
+}
+
 int main() {
   enable_logging();
   char *vers = version();
@@ -2912,5 +3936,7 @@ int main() {
   test_bw_palette();
   test_custom_palette();
   test_props();
+  test_get_mol_remove_hs();
+  test_png_metadata();
   return 0;
 }

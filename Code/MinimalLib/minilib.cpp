@@ -61,8 +61,10 @@ namespace rj = rapidjson;
 using namespace RDKit;
 
 namespace {
+#ifdef RDK_BUILD_MINIMAL_LIB_SUBSTRUCTLIBRARY
 static const char *NO_SUPPORT_FOR_PATTERN_FPS =
     "This SubstructLibrary was built without support for pattern fps";
+#endif
 
 std::string mappingToJsonArray(const ROMol &mol) {
   std::vector<unsigned int> atomMapping;
@@ -529,6 +531,12 @@ int JSMolBase::has_coords() const {
   return (get().getConformer().is3D() ? 3 : 2);
 }
 
+const RDGeom::POINT3D_VECT &JSMolBase::get_coords() const {
+  static const RDGeom::POINT3D_VECT empty;
+  return (get().getNumConformers() ? get().getConformer().getPositions()
+                                   : empty);
+}
+
 double JSMolBase::normalize_depiction(int canonicalize, double scaleFactor) {
   if (!get().getNumConformers()) {
     return -1.;
@@ -603,6 +611,29 @@ std::pair<JSMolList *, JSMolList *> JSMolBase::get_mmpa_frags(
                         new JSMolList(std::move(sidechains)));
 }
 #endif
+
+std::string JSMolBase::add_to_png_blob(const std::string &pngString,
+                                       const std::string &details) const {
+  PNGMetadataParams params;
+  std::string res;
+  try {
+    MinimalLib::updatePNGMetadataParamsFromJSON(params, details.c_str());
+    res = addMolToPNGString(get(), pngString, params);
+  } catch (...) {
+  }
+  return res;
+}
+
+std::string JSMolBase::combine_with(const JSMolBase &other,
+                                    const std::string &details) {
+  std::unique_ptr<ROMol> combinedMol;
+  auto res = MinimalLib::combine_mols_internal(get(), other.get(), combinedMol,
+                                               details.c_str());
+  if (res.empty() && combinedMol) {
+    reset(static_cast<RWMol *>(combinedMol.release()));
+  }
+  return "";
+}
 
 #ifdef RDK_BUILD_MINIMAL_LIB_RXN
 std::string JSReaction::get_svg(int w, int h) const {
@@ -921,10 +952,10 @@ JSMolBase *get_mcs_as_mol(const JSMolList &molList,
 }
 #endif
 
-RDKit::MinimalLib::LogHandle::LoggingFlag
-    RDKit::MinimalLib::LogHandle::d_loggingNeedsInit = true;
+std::unique_ptr<MinimalLib::LoggerStateSingletons>
+    MinimalLib::LoggerStateSingletons::d_instance;
 
-JSLog::JSLog(RDKit::MinimalLib::LogHandle *logHandle) : d_logHandle(logHandle) {
+JSLog::JSLog(MinimalLib::LogHandle *logHandle) : d_logHandle(logHandle) {
   assert(d_logHandle);
 }
 
@@ -935,19 +966,44 @@ std::string JSLog::get_buffer() const { return d_logHandle->getBuffer(); }
 void JSLog::clear_buffer() const { d_logHandle->clearBuffer(); }
 
 JSLog *set_log_tee(const std::string &log_name) {
-  auto logHandle = RDKit::MinimalLib::LogHandle::setLogTee(log_name.c_str());
+  auto logHandle = MinimalLib::LogHandle::setLogTee(log_name.c_str());
   return logHandle ? new JSLog(logHandle) : nullptr;
 }
 
 JSLog *set_log_capture(const std::string &log_name) {
-  auto logHandle =
-      RDKit::MinimalLib::LogHandle::setLogCapture(log_name.c_str());
+  auto logHandle = MinimalLib::LogHandle::setLogCapture(log_name.c_str());
   return logHandle ? new JSLog(logHandle) : nullptr;
 }
 
-void enable_logging() { RDKit::MinimalLib::LogHandle::enableLogging(); }
+bool enable_logging(const std::string &logName) {
+  return MinimalLib::LogHandle::enableLogging(logName.c_str());
+}
+
+bool disable_logging(const std::string &logName) {
+  return MinimalLib::LogHandle::disableLogging(logName.c_str());
+}
 
 void disable_logging() { RDKit::MinimalLib::LogHandle::disableLogging(); }
+
+JSMolBase *get_mol_from_png_blob(const std::string &pngString,
+                                 const std::string &details) {
+  auto mols = MinimalLib::get_mols_from_png_blob_internal(pngString, true,
+                                                          details.c_str());
+  if (mols.empty()) {
+    return nullptr;
+  }
+  return new JSMol(new RWMol(*mols.front()));
+}
+
+JSMolList *get_mols_from_png_blob(const std::string &pngString,
+                                  const std::string &details) {
+  auto mols = MinimalLib::get_mols_from_png_blob_internal(pngString, false,
+                                                          details.c_str());
+  if (mols.empty()) {
+    return nullptr;
+  }
+  return new JSMolList(mols);
+}
 
 #ifdef RDK_BUILD_MINIMAL_LIB_RGROUPDECOMP
 JSRGroupDecomposition::JSRGroupDecomposition(const JSMolBase &core,

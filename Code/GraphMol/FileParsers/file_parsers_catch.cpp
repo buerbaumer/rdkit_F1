@@ -1,5 +1,5 @@
 //
-//  Copyright (C) 2020-2021 Greg Landrum and other RDKit contributors
+//  Copyright (C) 2020-2025 Greg Landrum and other RDKit contributors
 //   @@ All Rights Reserved @@
 //  This file is part of the RDKit.
 //  The contents are covered by the terms of the BSD license
@@ -14,6 +14,7 @@
 #include <streambuf>
 
 #include "RDGeneral/test.h"
+#include <GraphMol/test_fixtures.h>
 #include <catch2/catch_all.hpp>
 #include <RDGeneral/Invariant.h>
 #include <GraphMol/RDKitBase.h>
@@ -31,6 +32,8 @@
 #include <GraphMol/FileParsers/MolFileStereochem.h>
 #include <GraphMol/FileParsers/MolWriters.h>
 #include <GraphMol/MonomerInfo.h>
+#include <GraphMol/Depictor/RDDepictor.h>
+#include <GraphMol/test_fixtures.h>
 #include <RDGeneral/FileParseException.h>
 #include <boost/algorithm/string.hpp>
 
@@ -1646,7 +1649,7 @@ M  END)CTAB";
     REQUIRE(mol);
     mol->updatePropertyCache();
     CHECK(mol->getAtomWithIdx(0)->getNoImplicit());
-    CHECK(mol->getAtomWithIdx(0)->getExplicitValence() == 0);
+    CHECK(mol->getAtomWithIdx(0)->getValence(Atom::ValenceType::EXPLICIT) == 0);
     CHECK(mol->getAtomWithIdx(0)->getTotalValence() == 0);
     auto outBlock = MolToMolBlock(*mol);
     REQUIRE(outBlock.find("0  0 15") != std::string::npos);
@@ -1668,7 +1671,7 @@ M  END)CTAB";
     REQUIRE(mol);
     mol->updatePropertyCache();
     CHECK(mol->getAtomWithIdx(0)->getNoImplicit());
-    CHECK(mol->getAtomWithIdx(0)->getExplicitValence() == 5);
+    CHECK(mol->getAtomWithIdx(0)->getValence(Atom::ValenceType::EXPLICIT) == 5);
     CHECK(mol->getAtomWithIdx(0)->getTotalValence() == 5);
     auto outBlock = MolToMolBlock(*mol);
     REQUIRE(outBlock.find("0  0  5") != std::string::npos);
@@ -1837,6 +1840,8 @@ GASTEIGER
     CHECK(mol->getNumAtoms() == 2);
   }
   SECTION("_mol2 failure") {
+    // this one checks that the C-Na bond is not automatically converted
+    // to dative when parsing Mol2 files
     auto mol = R"DATA(@<TRIPOS>MOLECULE
 UNK
 6 5 0 0 0
@@ -2749,6 +2754,216 @@ TEST_CASE("write molecule to PNG", "[writer][PNG]") {
     CHECK(mol->getNumAtoms() == 29);
     CHECK(mol->getNumConformers() == 1);
   }
+  SECTION("use PKL") {
+    std::string fname =
+        rdbase +
+        "/Code/GraphMol/FileParsers/test_data/colchicine.no_metadata.png";
+    auto colchicine =
+        "COc1cc2c(c(OC)c1OC)-c1ccc(OC)c(=O)cc1[C@@H](NC(C)=O)CC2"_smiles;
+    REQUIRE(colchicine);
+    RDDepict::compute2DCoords(*colchicine);
+    CHECK(colchicine->getNumConformers() == 1);
+    static const std::string propertyName("property");
+    static const std::string propertyValue("value");
+    colchicine->setProp<std::string>(propertyName, propertyValue);
+    PNGMetadataParams params;
+    params.includePkl = true;
+    params.includeSmiles = false;
+    params.includeMol = false;
+    {
+      std::ifstream strm(fname, std::ios::in | std::ios::binary);
+      params.propertyFlags = PicklerOps::PropertyPickleOptions::NoProps;
+      auto pngString = addMolToPNGStream(*colchicine, strm, params);
+      // read it back out
+      std::unique_ptr<ROMol> mol(PNGStringToMol(pngString));
+      REQUIRE(mol);
+      CHECK(mol->getNumAtoms() == 29);
+      CHECK(mol->getNumConformers() == 1);
+      CHECK(!mol->hasProp(propertyName));
+    }
+    {
+      std::ifstream strm(fname, std::ios::in | std::ios::binary);
+      params.propertyFlags = PicklerOps::PropertyPickleOptions::AllProps;
+      auto pngString = addMolToPNGStream(*colchicine, strm, params);
+      // read it back out
+      std::unique_ptr<ROMol> mol(PNGStringToMol(pngString));
+      REQUIRE(mol);
+      CHECK(mol->getNumAtoms() == 29);
+      CHECK(mol->getNumConformers() == 1);
+      CHECK(mol->hasProp(propertyName));
+      CHECK(mol->getProp<std::string>(propertyName) == propertyValue);
+    }
+    {
+      std::ifstream strm(fname, std::ios::in | std::ios::binary);
+      params.includePkl = false;
+      params.includeSmiles = true;
+      params.cxSmilesFlags = SmilesWrite::CXSmilesFields::CX_ALL_BUT_COORDS;
+      auto pngString = addMolToPNGStream(*colchicine, strm, params);
+      // read it back out
+      std::unique_ptr<ROMol> mol(PNGStringToMol(pngString));
+      REQUIRE(mol);
+      CHECK(mol->getNumAtoms() == 29);
+      CHECK(mol->getNumConformers() == 0);
+      CHECK(!mol->hasProp(propertyName));
+    }
+  }
+  SECTION("use original wedging") {
+    std::string fname =
+        rdbase +
+        "/Code/GraphMol/FileParsers/test_data/colchicine.no_metadata.png";
+    auto colchicineUnusualWedging =
+        R"CTAB(
+     RDKit          2D
+
+ 29 31  0  0  0  0  0  0  0  0999 V2000
+    6.4602    1.0300    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    5.3062    1.9883    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.8993    1.4680    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.7453    2.4262    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3384    1.9059    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0856    0.4273    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2396   -0.5309    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.9868   -2.0094    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.1408   -2.9677    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.6465   -0.0106    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    4.8005   -0.9688    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    4.5477   -2.4474    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2280   -0.2968    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.1857   -1.7387    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6836   -2.9611    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1813   -3.0436    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.7569   -4.4288    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.2442   -4.6230    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.1797   -1.9240    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.6215   -2.3378    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.9268   -0.4455    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6132    0.2787    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0269    1.7205    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.5055    1.9733    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -4.0258    3.3802    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -5.5043    3.6330    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0675    4.5342    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1576    2.9429    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.3401    3.0254    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  7  1  0
+  7  8  1  0
+  8  9  1  0
+  7 10  2  0
+ 10 11  1  0
+ 11 12  1  0
+  6 13  1  0
+ 13 14  2  0
+ 14 15  1  0
+ 15 16  2  0
+ 16 17  1  0
+ 17 18  1  0
+ 16 19  1  0
+ 19 20  2  0
+ 19 21  1  0
+ 21 22  2  0
+ 23 22  1  1
+ 23 24  1  0
+ 24 25  1  0
+ 25 26  1  0
+ 25 27  2  0
+ 23 28  1  0
+ 28 29  1  0
+ 10  3  1  0
+ 22 13  1  0
+ 29  5  1  0
+M  END
+)CTAB"_ctab;
+    REQUIRE(colchicineUnusualWedging);
+    CHECK(colchicineUnusualWedging->getNumConformers() == 1);
+    SmilesWriteParams ps;
+    CHECK(MolToCXSmiles(*colchicineUnusualWedging).find("wU:22.24|") !=
+          std::string::npos);
+    CHECK(MolToCXSmiles(*colchicineUnusualWedging, ps, SmilesWrite::CX_ALL,
+                        RestoreBondDirOptionTrue)
+              .find("wU:22.23|") != std::string::npos);
+    PNGMetadataParams params;
+    params.includePkl = true;
+    params.includeSmiles = true;
+    params.includeMol = true;
+    params.propertyFlags = PicklerOps::PropertyPickleOptions::AtomProps |
+                           PicklerOps::PropertyPickleOptions::BondProps;
+    {
+      std::ifstream strm(fname, std::ios::in | std::ios::binary);
+      auto pngString =
+          addMolToPNGStream(*colchicineUnusualWedging, strm, params);
+      // read it back out
+      std::unique_ptr<ROMol> mol(PNGStringToMol(pngString));
+      REQUIRE(mol);
+      CHECK(mol->getNumAtoms() == 29);
+      CHECK(mol->getNumConformers() == 1);
+      CHECK(
+          MolToCXSmiles(*mol, ps, SmilesWrite::CX_ALL, RestoreBondDirOptionTrue)
+              .find("wU:22.23|") != std::string::npos);
+      auto metadata = PNGStringToMetadata(pngString);
+      auto smilesFound = false;
+      auto ctabFound = false;
+      auto pklFound = false;
+      for (const auto &[key, value] : metadata) {
+        if (key.substr(0, 6) == "SMILES") {
+          smilesFound = true;
+          CHECK(value.find("wU:22.24|") != std::string::npos);
+        } else if (key.substr(0, 3) == "MOL") {
+          ctabFound = true;
+          CHECK(value.find(" 23 24  1  1") != std::string::npos);
+        } else if (key.substr(0, 8) == "rdkitPKL") {
+          pklFound = true;
+          RWMol molFromPkl(value);
+          CHECK(MolToMolBlock(molFromPkl).find(" 23 24  1  1") !=
+                std::string::npos);
+          Chirality::reapplyMolBlockWedging(molFromPkl);
+          CHECK(MolToMolBlock(molFromPkl).find(" 23 22  1  1") !=
+                std::string::npos);
+        }
+      }
+      CHECK((smilesFound && ctabFound && pklFound));
+    }
+    {
+      params.restoreBondDirs = RestoreBondDirOptionTrue;
+      std::ifstream strm(fname, std::ios::in | std::ios::binary);
+      auto pngString =
+          addMolToPNGStream(*colchicineUnusualWedging, strm, params);
+      // read it back out
+      std::unique_ptr<ROMol> mol(PNGStringToMol(pngString));
+      REQUIRE(mol);
+      CHECK(mol->getNumAtoms() == 29);
+      CHECK(mol->getNumConformers() == 1);
+      CHECK(
+          MolToCXSmiles(*mol, ps, SmilesWrite::CX_ALL, RestoreBondDirOptionTrue)
+              .find("wU:22.23|") != std::string::npos);
+      auto metadata = PNGStringToMetadata(pngString);
+      auto smilesFound = false;
+      auto ctabFound = false;
+      auto pklFound = false;
+      for (const auto &[key, value] : metadata) {
+        if (key.substr(0, 6) == "SMILES") {
+          smilesFound = true;
+          CHECK(value.find("wU:22.23|") != std::string::npos);
+        } else if (key.substr(0, 3) == "MOL") {
+          ctabFound = true;
+          CHECK(value.find(" 23 22  1  1") != std::string::npos);
+        } else if (key.substr(0, 8) == "rdkitPKL") {
+          pklFound = true;
+          RWMol molFromPkl(value);
+          CHECK(MolToMolBlock(molFromPkl).find(" 23 24  1  1") !=
+                std::string::npos);
+          Chirality::reapplyMolBlockWedging(molFromPkl);
+          CHECK(MolToMolBlock(molFromPkl).find(" 23 22  1  1") !=
+                std::string::npos);
+        }
+      }
+      CHECK((smilesFound && ctabFound && pklFound));
+    }
+  }
 }
 TEST_CASE("multiple molecules in the PNG", "[writer][PNG]") {
   std::string rdbase = getenv("RDBASE");
@@ -3427,7 +3642,7 @@ M  END
     auto mb = MolToV3KMolBlock(*m);
     CHECK(mb.find("V30 8 10 5 8") != std::string::npos);
     CHECK(MolToSmiles(*m) ==
-          "CC1=O~[H]OC(C)C1");  // the SMILES writer still doesn't know what to
+          "CC1CC(C)O[H]~O=1");  // the SMILES writer still doesn't know what to
                                 // do with it
   }
 }
@@ -3889,7 +4104,9 @@ M  V30 1 1 1 2
 M  V30 END BOND
 M  V30 END CTAB
 M  END)CTAB";
-    { REQUIRE_THROWS_AS(MolBlockToMol(ctab), FileParseException); }
+    {
+      REQUIRE_THROWS_AS(MolBlockToMol(ctab), FileParseException);
+    }
     {
       bool sanitize = true;
       bool removeHs = true;
@@ -5862,16 +6079,7 @@ TEST_CASE("MaeMolSupplier setData and reset methods",
   unsigned i = 0;
   while (!supplier.atEnd()) {
     INFO("Second input, mol " + std::to_string(i));
-
-    std::unique_ptr<ROMol> molptr;
-    try {
-      molptr.reset(supplier.next());
-    } catch (const FileParseException &) {
-      // the 4th structure is intentionally bad.
-    }
-
-    REQUIRE((i == 3) ^ (molptr != nullptr));
-
+    std::unique_ptr<ROMol> molptr(supplier.next());
     ++i;
   }
   INFO("Second input, mol count");
@@ -6453,14 +6661,9 @@ TEST_CASE("MaeWriter basic testing", "[mae][MaeWriter][writer]") {
 TEST_CASE("MaeWriter edge case testing", "[mae][MaeWriter][writer][bug]") {
   SECTION("No atoms") {
     ROMol m;
-
-    auto oss = new std::ostringstream;
-    MaeWriter w(oss);
-    w.write(m);
-    w.flush();
-
-    CHECK(oss->str().empty());
+    CHECK_THROWS_AS(RDKit::MaeWriter::getText(m), ValueErrorException);
   }
+
   SECTION("No bonds") {
     auto m = "C"_smiles;
     REQUIRE(m);
@@ -6476,34 +6679,23 @@ TEST_CASE("MaeWriter edge case testing", "[mae][MaeWriter][writer][bug]") {
     CHECK(mae.find("m_atom[1]") != std::string::npos);
     CHECK(mae.find("m_bond[") == std::string::npos);
   }
-  SECTION("Not kekulizable bonds") {
-    bool debug = false;
-    bool sanitize = false;
-    std::unique_ptr<ROMol> m(SmilesToMol(
-        "c1cncc1", debug, sanitize));  // This SMILES is intentionally bad!
-    REQUIRE(m);
 
-    m->getBondWithIdx(0)->setBondType(Bond::AROMATIC);
+  SECTION("Not kekulizable mols") {
+    v2::SmilesParse::SmilesParserParams p;
+    p.sanitize = false;
+    auto mol = v2::SmilesParse::MolFromSmiles("c1ccnc1", p);
+    REQUIRE(mol);
 
-    auto oss = new std::ostringstream;
-    MaeWriter w(oss);
-    w.write(*m);
-    w.flush();
-
-    CHECK(oss->str().empty());
+    CHECK_THROWS_AS(RDKit::MaeWriter::getText(*mol), KekulizeException);
   }
+
   SECTION("Unsupported bonds") {
     auto m = "CC"_smiles;
     REQUIRE(m);
 
     m->getBondWithIdx(0)->setBondType(Bond::DATIVEONE);
 
-    auto oss = new std::ostringstream;
-    MaeWriter w(oss);
-    w.write(*m);
-    w.flush();
-
-    CHECK(oss->str().empty());
+    CHECK_THROWS_AS(RDKit::MaeWriter::getText(*m), ValueErrorException);
   }
 }
 
@@ -6821,6 +7013,8 @@ TEST_CASE("StereoGroup id forwarding", "[StereoGroup][ctab]") {
 TEST_CASE(
     "GitHub issue #6664: Mol file parser strips stereogenic H from imine bonds",
     "[reader]") {
+  auto useLegacy = GENERATE(true, false);
+  UseLegacyStereoPerceptionFixture fx(useLegacy);
   SECTION("mol file") {
     auto mol = R"CTAB(
                     2D
@@ -6847,7 +7041,13 @@ M  END
 
     auto dblBond = mol->getBondWithIdx(3);
     REQUIRE(dblBond->getBondType() == Bond::DOUBLE);
-    CHECK(dblBond->getStereo() == Bond::STEREOE);
+    if (useLegacy) {
+      CHECK(dblBond->getStereo() == Bond::STEREOE);
+    } else {
+      CHECK(dblBond->getStereo() == Bond::STEREOCIS);
+      CHECK(dblBond->getStereoAtoms()[0] == 0);
+      CHECK(dblBond->getStereoAtoms()[1] == 6);
+    }
   }
   SECTION("mol2 file") {
     auto mol = R"MOL2(
@@ -6880,7 +7080,13 @@ USER_CHARGES
 
     auto dblBond = mol->getBondWithIdx(5);
     REQUIRE(dblBond->getBondType() == Bond::DOUBLE);
-    CHECK(dblBond->getStereo() == Bond::STEREOE);
+    if (useLegacy) {
+      CHECK(dblBond->getStereo() == Bond::STEREOE);
+    } else {
+      CHECK(dblBond->getStereo() == Bond::STEREOCIS);
+      CHECK(dblBond->getStereoAtoms()[0] == 0);
+      CHECK(dblBond->getStereoAtoms()[1] == 6);
+    }
   }
 }
 
@@ -7155,7 +7361,7 @@ class FragTest {
         expectedResult(expectedResultInit),
         reapplyMolBlockWedging(reapplyMolBlockWedgingInit),
         origSgroupCount(origSgroupCountInit),
-        newSgroupCount(newSgroupCountInit){};
+        newSgroupCount(newSgroupCountInit) {};
 };
 
 void testFragmentation(const FragTest &fragTest) {
@@ -7410,5 +7616,154 @@ TEST_CASE("Github #7306: bad crossed bonds in large aromatic rings") {
     CHECK(ctab.find("CFG=2") == std::string::npos);
     ctab = MolToMolBlock(*m);
     CHECK(ctab.find("2  3\n") == std::string::npos);
+  }
+}
+
+TEST_CASE(
+    "Github #8023: explicit valence for charged organic atoms in mol block") {
+  SECTION("as reported 1") {
+    auto m = "C[NH3+]"_smiles;
+    REQUIRE(m);
+    auto ctab = MolToMolBlock(*m);
+    CHECK(ctab.find("N   0  0  0  0  0  0  0") != std::string::npos);
+    ctab = MolToV3KMolBlock(*m);
+    CHECK(ctab.find("CHG=1") != std::string::npos);
+    CHECK(ctab.find("VAL=4") == std::string::npos);
+  }
+  SECTION("nitro-type") {
+    auto m = "C[N+](=S)[O-]"_smiles;
+    REQUIRE(m);
+    auto ctab = MolToMolBlock(*m);
+    CHECK(ctab.find("N   0  0  0  0  0  0  0") != std::string::npos);
+    CHECK(ctab.find("O   0  0  0  0  0  0  0") != std::string::npos);
+    ctab = MolToV3KMolBlock(*m);
+    CHECK(ctab.find("CHG=1") != std::string::npos);
+    CHECK(ctab.find("VAL=4") == std::string::npos);
+    CHECK(ctab.find("CHG=-1") != std::string::npos);
+    CHECK(ctab.find("VAL=1") == std::string::npos);
+  }
+}
+
+TEST_CASE("Github #8060: crash with a bad mol block") {
+  SECTION("as reported") {
+    std::string molblock = R"CTAB(
+
+
+ 11 20  0  0  0  0  0  0  0  0999 V2000
+    0.7752    1.4699    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0024    0.9086    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2976    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2528    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5479    0.9086    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    3.9085    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2952    4.8170    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2504    4.8170    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5455    3.9085    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7728    3.3471    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7752    2.4009    0.0000 Fe  0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  3  4  1  0  0  0  0
+  4  5  1  0  0  0  0
+  5  1  1  0  0  0  0
+  6  7  1  0  0  0  0
+  7  8  1  0  0  0  0
+  8  9  1  0  0  0  0
+  9 10  1  0  0  0  0
+ 10  6  1  0  0  0  0
+ 11  1  1  0  0  0  0
+ 11  2  1  0  0  0  0
+ 11  3  1  0  0  0  0
+ 11  4  1  0  0  0  0
+ 11  5  1  0  0  0  0
+ 11  6  1  0  0  0  0
+ 11  7  1  0  0  0  0
+ 11  8  1  0  0  0  0
+ 11  9  1  0  0  0  0
+ 11 10  1  0  0  0  0
+M  END)CTAB";
+    auto m = v2::FileParsers::MolFromMolBlock(molblock);
+    REQUIRE(m);
+    {
+      UseLegacyStereoPerceptionFixture reset_stereo_perception{false};
+      auto m = v2::FileParsers::MolFromMolBlock(molblock);
+      REQUIRE(m);
+    }
+  }
+  SECTION("catch expected exception") {
+    // the molecule is really stupid
+    std::string molblock = R"CTAB(
+
+
+ 21 40  0  0  0  0  0  0  0  0999 V2000
+    0.7752    1.4699    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0024    0.9086    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2976    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2528    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5479    0.9086    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    3.9085    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2952    4.8170    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2504    4.8170    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5455    3.9085    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7728    3.3471    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7752    1.4699    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0024    0.9086    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2976    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2528    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5479    0.9086    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    3.9085    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2952    4.8170    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2504    4.8170    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5455    3.9085    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7728    3.3471    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7752    2.4009    0.0000 Fe  0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  3  4  1  0  0  0  0
+  4  5  1  0  0  0  0
+  5  1  1  0  0  0  0
+  6  7  1  0  0  0  0
+  7  8  1  0  0  0  0
+  8  9  1  0  0  0  0
+  9 10  1  0  0  0  0
+ 10  6  1  0  0  0  0
+ 11 12  1  0  0  0  0
+ 12 13  1  0  0  0  0
+ 13 14  1  0  0  0  0
+ 14 15  1  0  0  0  0
+ 15 11  1  0  0  0  0
+ 16 17  1  0  0  0  0
+ 17 18  1  0  0  0  0
+ 18 19  1  0  0  0  0
+ 19 20  1  0  0  0  0
+ 20 16  1  0  0  0  0
+ 21  1  1  0  0  0  0
+ 21  2  1  0  0  0  0
+ 21  3  1  0  0  0  0
+ 21  4  1  0  0  0  0
+ 21  5  1  0  0  0  0
+ 21  6  1  0  0  0  0
+ 21  7  1  0  0  0  0
+ 21  8  1  0  0  0  0
+ 21  9  1  0  0  0  0
+ 21 10  1  0  0  0  0
+ 21 11  1  0  0  0  0
+ 21 12  1  0  0  0  0
+ 21 13  1  0  0  0  0
+ 21 14  1  0  0  0  0
+ 21 15  1  0  0  0  0
+ 21 16  1  0  0  0  0
+ 21 17  1  0  0  0  0
+ 21 18  1  0  0  0  0
+ 21 19  1  0  0  0  0
+ 21 20  1  0  0  0  0
+M  END)CTAB";
+    REQUIRE_THROWS_AS(v2::FileParsers::MolFromMolBlock(molblock),
+                      std::out_of_range);
+    {
+      UseLegacyStereoPerceptionFixture reset_stereo_perception{false};
+      auto m = v2::FileParsers::MolFromMolBlock(molblock);
+      REQUIRE(m);
+    }
   }
 }

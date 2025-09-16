@@ -125,7 +125,7 @@ typedef unsigned long long int	uintmax_t;
 %shared_ptr(ForceFields::ForceFieldContrib);
 %shared_ptr(ForceFields::UFF::AngleBendContrib);
 %shared_ptr(ForceFields::UFF::BondStretchContrib);
-%shared_ptr(ForceFields::UFF::DistanceConstraintContrib);
+%shared_ptr(ForceFields::DistanceConstraintContrib);
 %shared_ptr(ForceFields::UFF::vdWContrib);
 %shared_ptr(ForceFields::UFF::TorsionAngleContrib);
 %shared_ptr(ForceFields::UFF::InversionContrib);
@@ -310,7 +310,9 @@ typedef unsigned long long int	uintmax_t;
 #ifdef RDK_BUILD_INCHI_SUPPORT
 %include "../Inchi.i"
 #endif
-
+#ifdef RDK_BUILD_CHEMDRAW_SUPPORT
+%include "../ChemDraw.i"
+#endif
 %include "../DiversityPick.i"
 
 %{

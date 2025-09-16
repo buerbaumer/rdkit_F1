@@ -7,6 +7,7 @@ rdkit_library(DataStructs
               BitVect.cpp SparseBitVect.cpp ExplicitBitVect.cpp Utils.cpp
               base64.cpp BitOps.cpp DiscreteDistMat.cpp
               DiscreteValueVect.cpp FPBReader.cpp MultiFPBReader.cpp
+              RealValueVect.cpp
               LINK_LIBRARIES RDGeneral)
 target_compile_definitions(DataStructs PRIVATE RDKIT_DATASTRUCTS_BUILD)
 
@@ -19,6 +20,7 @@ rdkit_headers(base64.h
               DatastructsStreamOps.h
               DiscreteDistMat.h
               DiscreteValueVect.h
+              RealValueVect.h
               ExplicitBitVect.h
               SparseBitVect.h
               SparseIntVect.h
@@ -26,13 +28,13 @@ rdkit_headers(base64.h
               MultiFPBReader.h
               DEST DataStructs)
 
-rdkit_test(testDataStructs testDatastructs.cpp
+rdkit_catch_test(testDataStructs testDatastructs.cpp
            LINK_LIBRARIES DataStructs )
 
-rdkit_test(testFPB testFPB.cpp
+rdkit_catch_test(testFPB testFPB.cpp
            LINK_LIBRARIES DataStructs )
 
-rdkit_test(testMultiFPB testMultiFPB.cpp
+rdkit_catch_test(testMultiFPB testMultiFPB.cpp
            LINK_LIBRARIES DataStructs )
 
 rdkit_catch_test(catchDataStructs catch_tests.cpp

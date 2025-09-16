@@ -89,8 +89,8 @@ bool isAtomPotentialTetrahedralCenter(const Atom *atom) {
         // sulfur or selenium with either a positive charge or a double
         // bond:
         if ((atom->getAtomicNum() == 16 || atom->getAtomicNum() == 34) &&
-            (atom->getExplicitValence() == 4 ||
-             (atom->getExplicitValence() == 3 &&
+            (atom->getValence(Atom::ValenceType::EXPLICIT) == 4 ||
+             (atom->getValence(Atom::ValenceType::EXPLICIT) == 3 &&
               atom->getFormalCharge() == 1))) {
           legalCenter = true;
         } else if (atom->getAtomicNum() == 7) {
@@ -272,7 +272,7 @@ StereoInfo getStereoInfo(const Bond *bond) {
         UNDER_CONSTRUCTION("unrecognized bond stereo type");
     }
   } else {
-    UNDER_CONSTRUCTION("unsupported bond type in getStereoInfo()");
+    sinfo.type = StereoType::Unspecified;
   }
 
   return sinfo;
@@ -654,31 +654,53 @@ void flagRingStereo(ROMol &mol,
       if (!knownAtoms[aidx] && (!possibleAtoms || !possibleAtoms->test(aidx))) {
         continue;
       }
-      if (!ringIsOddSized) {
-        // find the index of the atom on the opposite side of the even-sized
-        // ring
-        auto oppositeIdx = aring[(ai + halfSize) % sz];
-        bool toAtomOppositePossible = false;
-        auto oppositeAtom = mol.getAtomWithIdx(oppositeIdx);
-        for (auto bond : mol.atomBonds(oppositeAtom)) {
-          auto bidx = bond->getIdx();
-          if ((knownBonds[bidx] ||
-               (possibleBonds && possibleBonds->test(bidx))) &&
-              std::find(bring.begin(), bring.end(), bidx) == bring.end()) {
-            toAtomOppositePossible = true;
-            break;
-          }
-        }
 
-        if (knownAtoms[oppositeIdx] ||
-            (possibleAtoms && possibleAtoms->test(oppositeIdx)) ||
-            toAtomOppositePossible) {
-          nHere += 1 + toAtomOppositePossible;
-          possibleAtomsInRing.set(aidx);
-          possibleAtomsInRing.set(oppositeIdx);
-          mol.getAtomWithIdx(aidx)->setProp(
-              common_properties::_ringStereoOtherAtom, oppositeIdx);
-          continue;
+      for (unsigned int ringDivisor : {2, 3}) {
+        bool ringIsMultipleOfDivisor = ((sz % ringDivisor) == 0);
+        auto incrementSize = sz / ringDivisor;
+
+        if (ringIsMultipleOfDivisor) {
+          // find the two indices of the atoms 1/3 the way around the ring
+
+          unsigned int otherFoundByBondCount = 0;
+          unsigned int otherFoundByAtomCount = 0;
+          for (unsigned int indexIncrement = incrementSize; indexIncrement < sz;
+               indexIncrement += incrementSize) {
+            auto otherIdx = aring[(ai + indexIncrement) % sz];
+            auto otherAtom = mol.getAtomWithIdx(otherIdx);
+
+            for (auto bond : mol.atomBonds(otherAtom)) {
+              auto bidx = bond->getIdx();
+              if ((knownBonds[bidx] ||
+                   (possibleBonds && possibleBonds->test(bidx))) &&
+                  std::find(bring.begin(), bring.end(), bidx) == bring.end()) {
+                otherFoundByBondCount++;
+                break;
+              }
+            }
+            if (otherFoundByBondCount == 0) {
+              if (knownAtoms[otherIdx] ||
+                  (possibleAtoms && possibleAtoms->test(otherIdx))) {
+                otherFoundByAtomCount++;
+              }
+            }
+          }
+
+          if (otherFoundByBondCount == ringDivisor - 1 ||
+              otherFoundByAtomCount == ringDivisor - 1) {
+            nHere += 1 + otherFoundByBondCount;
+            for (unsigned int indexIncrement = 0; indexIncrement < sz;
+                 indexIncrement += incrementSize) {
+              possibleAtomsInRing.set(aring[(ai + indexIncrement) % sz]);
+            }
+            if (ringDivisor == 2) {
+              mol.getAtomWithIdx(aidx)->setProp(
+                  common_properties::_ringStereoOtherAtom,
+                  aring[(ai + incrementSize) % sz]);
+            }
+
+            continue;
+          }
         }
       }
 
@@ -796,15 +818,17 @@ bool updateAtoms(ROMol &mol, const std::vector<unsigned int> &aranks,
             needAnotherRound = true;
           }
           sinfos.push_back(std::move(sinfo));
-        } else if (possibleAtoms[aidx]) {
+        } else {
+          // Only do another round if we change anything here
+          needAnotherRound |= possibleAtoms[aidx];
           possibleAtoms[aidx] = 0;
           atomSymbols[aidx] = getAtomCompareSymbol(*atom);
-          needAnotherRound = true;
 
           // if this was creating possible ring stereo, update that info now
           if (possibleRingStereoAtoms[aidx]) {
             --possibleRingStereoAtoms[aidx];
             if (!possibleRingStereoAtoms[aidx]) {
+              needAnotherRound = true;
               // we're no longer in any ring with possible ring stereo. Go
               // update all the other atoms/bonds in rings that we're in:
               for (unsigned int ridx = 0;
@@ -812,15 +836,26 @@ bool updateAtoms(ROMol &mol, const std::vector<unsigned int> &aranks,
                 const auto &aring = mol.getRingInfo()->atomRings()[ridx];
                 unsigned int nHere = 0;
                 for (auto raidx : aring) {
-                  if (possibleRingStereoAtoms[raidx]) {
-                    --possibleRingStereoAtoms[raidx];
-                    if (possibleRingStereoAtoms[raidx]) {
-                      ++nHere;
-                    }
-                  }
+                  // Ring stereo changed, so un-fix atoms in this ring so we can
+                  // recheck them in the next iteration, for the case that they
+                  // are no longer after the current atom was declared
+                  // non-chiral
+                  fixedAtoms[raidx] = false;
+                  nHere += (possibleRingStereoAtoms[raidx] > 0);
                 }
                 if (nHere <= 1) {
-                  // update the bondstereo counts too
+                  // if the ring can't transmit stereo anymore, update the
+                  // counts
+                  if (nHere == 1) {
+                    // update the last potential ring stereo atom in the ring,
+                    // since it can't have ring stereo alone.
+                    for (auto raidx : aring) {
+                      if (possibleRingStereoAtoms[raidx]) {
+                        --possibleRingStereoAtoms[raidx];
+                        break;
+                      }
+                    }
+                  }
                   for (auto rbidx : mol.getRingInfo()->bondRings()[ridx]) {
                     if (possibleRingStereoBonds[rbidx]) {
                       --possibleRingStereoBonds[rbidx];
@@ -850,6 +885,10 @@ bool updateBonds(ROMol &mol, const std::vector<unsigned int> &aranks,
     auto bidx = bond->getIdx();
     if (knownBonds[bidx] || possibleBonds[bidx]) {
       auto sinfo = detail::getStereoInfo(bond);
+      if (sinfo.type == Chirality::StereoType::Unspecified) {
+        continue;  // not a double bond nor an atropisomer bond
+      }
+
       ASSERT_INVARIANT(sinfo.controllingAtoms.size() == 4,
                        "bad controlling atoms size");
 
@@ -1006,6 +1045,10 @@ void cleanMolStereo(ROMol &mol, const boost::dynamic_bitset<> &fixedAtoms,
 }
 }  // namespace
 
+void findChiralAtomSpecialCases(ROMol &mol,
+                                boost::dynamic_bitset<> &possibleSpecialCases,
+                                const std::vector<unsigned int> &atomRanks);
+
 std::vector<StereoInfo> runCleanup(ROMol &mol, bool flagPossible,
                                    bool cleanIt) {
   // This potentially does two passes of "canonicalization" to identify
@@ -1095,13 +1138,14 @@ std::vector<StereoInfo> runCleanup(ROMol &mol, bool flagPossible,
     const bool breakTies = false;
     const bool includeAtomMaps = false;
     const bool includeChiralPresence = false;
+    const bool useRingStereo = false;
     // Now apply the canonical atom ranking code with basic connectivity
     // invariants The necessary condition for chirality is that an atom's
     // neighbors must have unique ranks
     Canon::rankFragmentAtoms(mol, aranks, atomsInPlay, bondsInPlay,
                              &atomSymbols, &bondSymbols, breakTies,
                              includeChirality, includeIsotopes, includeAtomMaps,
-                             includeChiralPresence);
+                             includeChiralPresence, useRingStereo);
 #endif
     // check if any new atoms definitely now have stereo; do another loop if
     // so
@@ -1183,10 +1227,11 @@ std::vector<StereoInfo> runCleanup(ROMol &mol, bool flagPossible,
       const bool includeIsotopes = false;
       const bool includeAtomMaps = false;
       const bool includeChiralPresence = false;
-      Canon::rankFragmentAtoms(mol, aranks, atomsInPlay, bondsInPlay,
-                               &atomSymbols, &bondSymbols, breakTies,
-                               includeChirality, includeIsotopes,
-                               includeAtomMaps, includeChiralPresence);
+      const bool useRingStereo = false;
+      Canon::rankFragmentAtoms(
+          mol, aranks, atomsInPlay, bondsInPlay, &atomSymbols, &bondSymbols,
+          breakTies, includeChirality, includeIsotopes, includeAtomMaps,
+          includeChiralPresence, useRingStereo);
 #endif
       needAnotherRound = updateAtoms(
           mol, aranks, atomSymbols, possibleAtoms, knownAtoms, fixedAtoms,
@@ -1196,11 +1241,13 @@ std::vector<StereoInfo> runCleanup(ROMol &mol, bool flagPossible,
                       knownAtoms, knownBonds, fixedBonds, res);
     }
   }
-  if (cleanIt) {
-    for (const auto atom : mol.atoms()) {
-      atom->setProp<unsigned int>(common_properties::_ChiralAtomRank,
-                                  aranks[atom->getIdx()]);
-    }
+
+  boost::dynamic_bitset<> possibleSpecialCases(mol.getNumAtoms());
+  findChiralAtomSpecialCases(mol, possibleSpecialCases, aranks);
+
+  for (const auto atom : mol.atoms()) {
+    atom->setProp<unsigned int>(common_properties::_ChiralAtomRank,
+                                aranks[atom->getIdx()], true);
   }
 
 #if LOCAL_CANON

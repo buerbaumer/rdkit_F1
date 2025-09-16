@@ -33,7 +33,13 @@ if(needDownload)
   execute_process(COMMAND ${CMAKE_COMMAND} -E rename ${tar_dirname}
        ${PUBCHEMSHAPE_DIR}
        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
 endif()
+
+# simple patch for a typo in the pubchem_align library
+file(READ ${PUBCHEMSHAPE_DIR}/shape_neighbor.cpp FILE_CONTENTS)
+string(REPLACE "memcpy( qom, old_quattrans, 7 * sizeof( float ) );" "memcpy( qom, old_quattrans, 7 * sizeof( double ) );" FILE_CONTENTS "${FILE_CONTENTS}")
+file(WRITE ${PUBCHEMSHAPE_DIR}/shape_neighbor.cpp "${FILE_CONTENTS}")
 
 rdkit_library(pubchem_align3d ./pubchem-align3d/shape_functions1.cpp
             ./pubchem-align3d/shape_functions2.cpp ./pubchem-align3d/shape_neighbor.cpp SHARED)
@@ -47,7 +53,7 @@ target_compile_definitions(PubChemShape PRIVATE RDKIT_PUBCHEMSHAPE_BUILD)
 
 rdkit_headers(PubChemShape.hpp DEST GraphMol)
 
-rdkit_catch_test(shape_test test.cpp LINK_LIBRARIES PubChemShape FileParsers)
+rdkit_catch_test(shape_test test.cpp LINK_LIBRARIES PubChemShape FileParsers MolAlign MolTransforms)
 
 if(RDK_BUILD_PYTHON_WRAPPERS)
 add_subdirectory(Wrap)

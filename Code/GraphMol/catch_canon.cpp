@@ -24,6 +24,7 @@
 #include <GraphMol/SmilesParse/SmilesParse.h>
 #include <GraphMol/SmilesParse/SmilesWrite.h>
 #include <GraphMol/SmilesParse/CanonicalizeStereoGroups.h>
+#include <GraphMol/CIPLabeler/CIPLabeler.h>
 
 #include <random>
 
@@ -36,6 +37,7 @@ TEST_CASE("chirality and canonicalization") {
     bool cleanIt = true;
     bool force = true;
     MolOps::assignStereochemistry(*mol, cleanIt, force);
+    CIPLabeler::assignCIPLabels(*mol);
     std::string cip;
     CHECK(mol->getAtomWithIdx(1)->getPropIfPresent(common_properties::_CIPCode,
                                                    cip));
@@ -58,6 +60,8 @@ TEST_CASE("chirality and canonicalization") {
     bool cleanIt = true;
     bool force = true;
     MolOps::assignStereochemistry(*mol, cleanIt, force);
+    CIPLabeler::assignCIPLabels(*mol);
+
     std::string cip;
     CHECK(mol->getAtomWithIdx(1)->getPropIfPresent(common_properties::_CIPCode,
                                                    cip));
@@ -80,6 +84,8 @@ TEST_CASE("chirality and canonicalization") {
     bool cleanIt = true;
     bool force = true;
     MolOps::assignStereochemistry(*mol, cleanIt, force);
+    CIPLabeler::assignCIPLabels(*mol);
+
     std::string cip;
     CHECK(mol->getAtomWithIdx(1)->getPropIfPresent(common_properties::_CIPCode,
                                                    cip));
@@ -89,7 +95,7 @@ TEST_CASE("chirality and canonicalization") {
     CHECK(cip == "R");
     CHECK(mol->getAtomWithIdx(4)->getPropIfPresent(common_properties::_CIPCode,
                                                    cip));
-    CHECK(cip == "R");
+    CHECK(cip == "r");
     std::vector<unsigned int> ranks;
     bool breakTies = false;
     Canon::rankMolAtoms(*mol, ranks, breakTies);
@@ -107,6 +113,8 @@ TEST_CASE("chirality and canonicalization") {
     bool force = true;
     mol->getAtomWithIdx(4)->setChiralTag(Atom::ChiralType::CHI_TETRAHEDRAL_CCW);
     MolOps::assignStereochemistry(*mol, cleanIt, force);
+    CIPLabeler::assignCIPLabels(*mol);
+
     std::string cip;
     CHECK(mol->getAtomWithIdx(1)->getPropIfPresent(common_properties::_CIPCode,
                                                    cip));
@@ -130,6 +138,8 @@ TEST_CASE("chirality and canonicalization") {
     bool cleanIt = false;
     bool force = true;
     MolOps::assignStereochemistry(*mol, cleanIt, force);
+    CIPLabeler::assignCIPLabels(*mol);
+
     std::string cip;
     CHECK(mol->getAtomWithIdx(1)->getPropIfPresent(common_properties::_CIPCode,
                                                    cip));
@@ -454,15 +464,15 @@ TEST_CASE("pseudoTest1") {
          "C[C@H](Cl)C[C@@H](C)Cl"},
 
         {"N[C@H]1CC[C@@H](O)CC1 |a:1,4|", "N[C@H]1CC[C@@H](O)CC1 |o1:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
         {"N[C@H]1CC[C@@H](O)CC1 |a:1,4|", "N[C@H]1CC[C@@H](O)CC1 |&1:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
         {"N[C@H]1CC[C@@H](O)CC1 |a:1,4|", "N[C@@H]1CC[C@H](O)CC1 |a:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
         {"N[C@H]1CC[C@@H](O)CC1 |a:1,4|", "N[C@@H]1CC[C@H](O)CC1 |o1:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
         {"N[C@H]1CC[C@@H](O)CC1 |a:1,4|", "N[C@@H]1CC[C@H](O)CC1 |&1:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
 
         // {"C[C@H]1C[C@@H](C)C[C@@H](C)C1 |o1:1,o2:6,o3:3|",
         //  "C[C@@H]1C[C@H](C)C[C@@H](C)C1 |a:3,o1:6,o3:1|",
@@ -474,63 +484,63 @@ TEST_CASE("pseudoTest1") {
 
         {"C[C@H]1CC[C@H](CC1)C1CC(CC(C1)[C@@H]1CC[C@H](C)CC1)[C@@H]1CC[C@H](C)CC1 |o1:23,o2:20,o3:13,o4:16,o5:4,&6:1|",
          "C[C@H]1CC[C@@H](CC1)C1CC(CC(C1)[C@H]1CC[C@H](C)CC1)[C@H]1CC[C@H](C)CC1 |a:1,13,20,o2:4,o6:16,&4:23|",
-         "C[C@H]1CC[C@@H](C2CC([C@@H]3CC[C@H](C)CC3)CC([C@@H]3CC[C@H](C)CC3)C2)CC1 |a:4,8,17,o1:1,o2:11,&1:20|"},
+         "C[C@H]1CC[C@@H](C2CC([C@H]3CC[C@@H](C)CC3)CC([C@H]3CC[C@@H](C)CC3)C2)CC1 |a:4,8,17,o1:1,o2:11,&1:20|"},
 
         {"C[C@H]1CC[C@H](CC1)C1CC(CC(C1)[C@@H]1CC[C@H](C)CC1)[C@@H]1CC[C@H](C)CC1 |o1:23,o2:20,o3:13,o4:16,o5:4,o6:1|",
          "C[C@H]1CC[C@@H](CC1)C1CC(CC(C1)[C@H]1CC[C@H](C)CC1)[C@H]1CC[C@H](C)CC1 |a:4,13,23,o2:20,o4:16,o6:1|",
-         "C[C@H]1CC[C@@H](C2CC([C@@H]3CC[C@H](C)CC3)CC([C@@H]3CC[C@H](C)CC3)C2)CC1 |a:4,8,17,o1:1,o2:11,o3:20|"},
+         "C[C@H]1CC[C@@H](C2CC([C@H]3CC[C@@H](C)CC3)CC([C@H]3CC[C@@H](C)CC3)C2)CC1 |a:4,8,17,o1:1,o2:11,o3:20|"},
 
         {"C[C@H]1CC[C@@H](C[C@@H]2CC[C@H](C)CC2)CC1 |a:9,o1:6,&1:4,&2:1|",
          "C[C@H]1CC[C@H](C[C@H]2CC[C@H](C)CC2)CC1 |a:4,9,&1:6,o2:1|",
-         "C[C@H]1CC[C@H](C[C@@H]2CC[C@H](C)CC2)CC1 |a:4,6,o1:1,&1:9|"},
+         "C[C@H]1CC[C@@H](C[C@H]2CC[C@@H](C)CC2)CC1 |a:4,6,o1:1,&1:9|"},
 
         {"C[C@H]1CC[C@@H](C[C@@H]2CC[C@H](C)CC2)CC1 |o1:6,o2:1,9,o3:4|",
          "C[C@H]1CC[C@H](C[C@H]2CC[C@H](C)CC2)CC1 |o1:6,o2:1,9,o3:4|",
-         "C[C@H]1CC[C@@H](C[C@@H]2CC[C@H](C)CC2)CC1 |a:4,6,o1:1,o2:9|"},
+         "C[C@H]1CC[C@@H](C[C@H]2CC[C@@H](C)CC2)CC1 |a:4,6,o1:1,o2:9|"},
 
         {"C[C@H]1CC[C@@H](C[C@@H]2CC[C@H](C)CC2)CC1 |o1:6,o2:1,9,o3:4|",
          "C[C@H]1CC[C@H](C[C@H]2CC[C@H](C)CC2)CC1 |a:4,9,o1:6,o2:1|",
-         "C[C@H]1CC[C@@H](C[C@@H]2CC[C@H](C)CC2)CC1 |a:4,6,o1:1,o2:9|"},
+         "C[C@H]1CC[C@@H](C[C@H]2CC[C@@H](C)CC2)CC1 |a:4,6,o1:1,o2:9|"},
 
         {"N[C@H]1CC[C@@H](O)CC1", "N[C@@H]1CC[C@H](O)CC1",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
         {"N[C@H]1CC[C@@H](O)CC1 |o2:1,4|", "N[C@@H]1CC[C@H](O)CC1 |o2:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
         {"N[C@H]1CC[C@@H](O)CC1 |&2:1,4|", "N[C@@H]1CC[C@H](O)CC1 |&2:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
         {"N[C@H]1CC[C@@H](O)CC1 |a:1,4|", "N[C@@H]1CC[C@H](O)CC1 |a:1,4|",
-         "N[C@@H]1CC[C@H](O)CC1"},
+         "N[C@H]1CC[C@@H](O)CC1"},
 
         // no enhanced stereo
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1",
          "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1"},
 
         // enhance stereo abs,abs,abs
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,11,14|",
          "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1 |a:3,11,14|",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1"},
 
         // abs, abs, or and abs, or abs
 
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,11,o1:14|",
          "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,o1:14|",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1 |a:3,11,o1:14|"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,o1:14|"},
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,11,o1:14|",
          "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,14,o1:11|",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1 |a:3,11,o1:14|"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,o1:14|"},
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,11,o1:14|",
          "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,o1:11,o2:14|",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1 |a:3,11,o1:14|"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,o1:14|"},
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,11,&1:14|",
          "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,&1:14|",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1 |a:3,11,&1:14|"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,&1:14|"},
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,11,&1:14|",
          "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,14,&1:11|",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1 |a:3,11,&1:14|"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,&1:14|"},
         {"CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,11,&1:14|",
          "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@@H](C)CC1 |a:3,&1:11,&2:14|",
-         "CC(C)[C@H]1CCCCN1C(=O)[C@@H]1CC[C@H](C)CC1 |a:3,11,&1:14|"},
+         "CC(C)[C@H]1CCCCN1C(=O)[C@H]1CC[C@H](C)CC1 |a:3,11,&1:14|"},
 
     };
 
@@ -553,6 +563,9 @@ TEST_CASE("pseudoTest1") {
         idxV[i] = i;
       }
 
+      RDKit::canonicalizeStereoGroups(mol2);
+      auto outSmi2 = MolToCXSmiles(*mol2);
+      REQUIRE(outSmi2 == smiExpected);
       auto randomGen = std::mt19937(0xf00d);
       for (auto i = 0; i < 100; ++i) {
         INFO("i: " << i);
@@ -562,14 +575,11 @@ TEST_CASE("pseudoTest1") {
         std::unique_ptr<ROMol> nmol{MolOps::renumberAtoms(*mol1, nVect)};
 
         RDKit::canonicalizeStereoGroups(nmol);
-        RDKit::canonicalizeStereoGroups(mol2);
 
         auto outSmi1 = MolToCXSmiles(*nmol);
-        auto outSmi2 = MolToCXSmiles(*mol2);
 
         CHECK(outSmi1 == outSmi2);
         CHECK(outSmi1 == smiExpected);
-        CHECK(outSmi2 == smiExpected);
       }
     }
   }
@@ -1033,7 +1043,7 @@ M  END
   auto smiles = MolToSmiles(*m);
   CHECK(
       smiles ==
-      R"SMI(CC[C@@]1(C)/C2=C(C)/C3=N4->[CoH2+]56N2[C@H]([C@@H]1C)[C@]1(C)N->5=C(/C(C)=C2N->6=C(/C=C4/C(C)(C)[C@@H]3C)[C@@H](C)C\2(C)C)[C@@H](C)C1(C)C)SMI");
+      R"SMI(CC[C@@]1(C)/C2=C(C)/C3=[N]4->[CoH2+]56[N]2[C@H]([C@@H]1C)[C@]1(C)[N]->5=C(/C(C)=C2[N]->6=C(/C=C4/C(C)(C)[C@@H]3C)[C@@H](C)C\2(C)C)[C@@H](C)C1(C)C)SMI");
 }
 
 TEST_CASE("chiral presence and ranking") {
@@ -1108,4 +1118,42 @@ TEST_CASE("meso impact on atom ranking") {
       CHECK(ranks[3] != ranks[10]);
     }
   }
+}
+
+TEST_CASE("allow disabling ring stereo in ranking") {
+  UseLegacyStereoPerceptionFixture reset_stereo_perception(false);
+
+  std::string smi = "C[C@@H]1CC[C@@H](C)CC1";
+  auto m = v2::SmilesParse::MolFromSmiles(smi);
+  REQUIRE(m);
+
+  bool breakTies = false;
+  bool includeChirality = true;
+  bool includeIsotopes = true;
+  bool includeAtomMaps = true;
+  bool includeChiralPresence = false;
+  bool includeStereoGroups = true;
+  bool useNonStereoRanks = false;
+  bool includeRingStereo = true;
+  std::vector<unsigned int> res1;
+  Canon::rankMolAtoms(*m, res1, breakTies, includeChirality, includeIsotopes,
+                      includeAtomMaps, includeChiralPresence,
+                      includeStereoGroups, useNonStereoRanks,
+                      includeRingStereo);
+  CHECK(res1.size() == m->getNumAtoms());
+  CHECK(res1[2] != res1[7]);
+  CHECK(res1[2] == res1[3]);
+  CHECK(res1[3] != res1[6]);
+  CHECK(res1[6] == res1[7]);
+
+  includeRingStereo = false;
+  Canon::rankMolAtoms(*m, res1, breakTies, includeChirality, includeIsotopes,
+                      includeAtomMaps, includeChiralPresence,
+                      includeStereoGroups, useNonStereoRanks,
+                      includeRingStereo);
+  CHECK(res1.size() == m->getNumAtoms());
+  CHECK(res1[2] == res1[7]);
+  CHECK(res1[2] == res1[3]);
+  CHECK(res1[3] == res1[6]);
+  CHECK(res1[6] == res1[7]);
 }

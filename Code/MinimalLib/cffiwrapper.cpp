@@ -11,6 +11,7 @@
 #include <string>
 #include <cstring>
 #include <iostream>
+#include <regex>
 
 #include <RDGeneral/versions.h>
 #include <atomic>
@@ -56,6 +57,7 @@
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include "cffiwrapper.h"
 
 namespace rj = rapidjson;
 
@@ -69,18 +71,25 @@ using namespace RDKit;
 namespace {
 char *str_to_c(const std::string &str, size_t *len = nullptr) {
   if (len) {
-    *len = str.size();
+    *len = 0;
   }
   char *res;
   res = (char *)malloc(str.size() + 1);
-  memcpy((void *)res, (const void *)str.c_str(), str.size());
-  res[str.size()] = 0;
+  if (res) {
+    if (len) {
+      *len = str.size();
+    }
+    memcpy(res, str.c_str(), str.size());
+    res[str.size()] = '\0';
+  }
   return res;
 }
 char *str_to_c(const char *str) {
   char *res;
   res = (char *)malloc(strlen(str) + 1);
-  strcpy(res, str);
+  if (res) {
+    strcpy(res, str);
+  }
   return res;
 }
 }  // namespace
@@ -659,7 +668,7 @@ extern "C" void prefer_coordgen(short val) {
 #endif
 };
 
-extern "C" short has_coords(char *mol_pkl, size_t mol_pkl_sz) {
+extern "C" short has_coords(const char *mol_pkl, size_t mol_pkl_sz) {
   short res = 0;
   if (mol_pkl && mol_pkl_sz) {
     auto mol = mol_from_pkl(mol_pkl, mol_pkl_sz);
@@ -849,12 +858,22 @@ extern "C" short allow_non_tetrahedral_chirality(short value) {
   return was;
 }
 
-MinimalLib::LogHandle::LoggingFlag MinimalLib::LogHandle::d_loggingNeedsInit =
-    true;
+std::unique_ptr<MinimalLib::LoggerStateSingletons>
+    MinimalLib::LoggerStateSingletons::d_instance;
 
-extern "C" void enable_logging() { MinimalLib::LogHandle::enableLogging(); }
+extern "C" short enable_logging() {
+  return MinimalLib::LogHandle::enableLogging();
+}
+extern "C" short enable_logger(const char *log_name) {
+  return MinimalLib::LogHandle::enableLogging(log_name);
+}
 
-extern "C" void disable_logging() { MinimalLib::LogHandle::disableLogging(); }
+extern "C" short disable_logging() {
+  return MinimalLib::LogHandle::disableLogging();
+}
+extern "C" short disable_logger(const char *log_name) {
+  return MinimalLib::LogHandle::disableLogging(log_name);
+}
 
 extern "C" void *set_log_tee(const char *log_name) {
   return MinimalLib::LogHandle::setLogTee(log_name);
@@ -881,7 +900,7 @@ extern "C" char *get_log_buffer(void *log_handle) {
              : nullptr;
 }
 
-extern "C" bool clear_log_buffer(void *log_handle) {
+extern "C" short clear_log_buffer(void *log_handle) {
   if (log_handle) {
     reinterpret_cast<MinimalLib::LogHandle *>(log_handle)->clearBuffer();
     return 1;
@@ -958,6 +977,114 @@ extern "C" void keep_props(char **mol_pkl, size_t *mol_pkl_sz,
                            PicklerOps::PropertyPickleOptions::ComputedProps;
   MinimalLib::updatePropertyPickleOptionsFromJSON(propFlags, details_json);
   mol_to_pkl(mol, mol_pkl, mol_pkl_sz, propFlags);
+}
+
+extern "C" short add_mol_to_png_blob(char **png_blob, size_t *png_blob_sz,
+                                     const char *pkl, size_t pkl_sz,
+                                     const char *details_json) {
+  if (!png_blob || !*png_blob || !png_blob_sz || !*png_blob_sz || !pkl ||
+      !pkl_sz) {
+    return 0;
+  }
+  PNGMetadataParams params;
+  MinimalLib::updatePNGMetadataParamsFromJSON(params, details_json);
+  std::string pngString(*png_blob, *png_blob_sz);
+  try {
+    auto mol = mol_from_pkl(pkl, pkl_sz);
+    auto updatedPngString = addMolToPNGString(mol, pngString, params);
+    auto updated_png_blob =
+        static_cast<char *>(malloc(updatedPngString.size()));
+    if (!updated_png_blob) {
+      return 0;
+    }
+    memcpy(updated_png_blob, updatedPngString.data(), updatedPngString.size());
+    free(*png_blob);
+    *png_blob = updated_png_blob;
+    *png_blob_sz = updatedPngString.size();
+  } catch (...) {
+    return 0;
+  }
+  return 1;
+}
+
+extern "C" short get_mol_from_png_blob(const char *png_blob, size_t png_blob_sz,
+                                       char **pkl, size_t *pkl_sz,
+                                       const char *details_json) {
+  if (!png_blob || !png_blob_sz || !pkl || !pkl_sz) {
+    return 0;
+  }
+  std::string pngString(png_blob, png_blob_sz);
+  auto mols = MinimalLib::get_mols_from_png_blob_internal(pngString, true,
+                                                          details_json);
+  if (mols.empty()) {
+    return 0;
+  }
+  char *pkl_local = nullptr;
+  size_t pkl_sz_local = 0;
+  mol_to_pkl(*mols.front(), &pkl_local, &pkl_sz_local);
+  if (pkl_local && pkl_sz_local) {
+    *pkl = pkl_local;
+    *pkl_sz = pkl_sz_local;
+    return 1;
+  }
+  return 0;
+}
+
+extern "C" short get_mols_from_png_blob(const char *png_blob,
+                                        size_t png_blob_sz, char ***pkl_array,
+                                        size_t **pkl_sz_array,
+                                        const char *details_json) {
+  if (!png_blob || !png_blob_sz || !pkl_array || !pkl_sz_array) {
+    return 0;
+  }
+  std::string pngString(png_blob, png_blob_sz);
+  auto mols = MinimalLib::get_mols_from_png_blob_internal(pngString, false,
+                                                          details_json);
+  if (mols.empty()) {
+    return 0;
+  }
+  char **pkl_array_local = nullptr;
+  size_t *pkl_sz_array_local = nullptr;
+  size_t mol_array_len = mols.size() + 1;
+  pkl_array_local = (char **)malloc(mol_array_len * sizeof(char *));
+  if (pkl_array_local) {
+    memset(pkl_array_local, 0, mol_array_len * sizeof(char *));
+    pkl_sz_array_local = (size_t *)malloc(mol_array_len * sizeof(size_t));
+  }
+  if (pkl_sz_array_local) {
+    memset(pkl_sz_array_local, 0, mol_array_len * sizeof(size_t));
+    short i = 0;
+    for (const auto &mol : mols) {
+      mol_to_pkl(*mol, &pkl_array_local[i], &pkl_sz_array_local[i]);
+      if (pkl_array_local[i] && pkl_sz_array_local[i]) {
+        ++i;
+      } else {
+        break;
+      }
+    }
+    if (i == static_cast<short>(mols.size())) {
+      *pkl_array = pkl_array_local;
+      *pkl_sz_array = pkl_sz_array_local;
+      return i;
+    }
+  }
+  free_mol_array(&pkl_array_local, &pkl_sz_array_local);
+  return 0;
+}
+
+extern "C" void free_mol_array(char ***pkl_array, size_t **pkl_sz_array) {
+  if (pkl_array && *pkl_array) {
+    for (size_t i = 0; (*pkl_array)[i]; ++i) {
+      free((*pkl_array)[i]);
+      (*pkl_array)[i] = NULL;
+    }
+    free(*pkl_array);
+    *pkl_array = NULL;
+  }
+  if (pkl_sz_array && *pkl_sz_array) {
+    free(*pkl_sz_array);
+    *pkl_sz_array = NULL;
+  }
 }
 
 #if (defined(__GNUC__) || defined(__GNUG__))

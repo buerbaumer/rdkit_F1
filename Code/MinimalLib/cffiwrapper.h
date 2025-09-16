@@ -138,7 +138,7 @@ RDKIT_RDKITCFFI_EXPORT short fragment_parent(char **pkl, size_t *pkl_sz,
 
 // coordinates
 RDKIT_RDKITCFFI_EXPORT void prefer_coordgen(short val);
-RDKIT_RDKITCFFI_EXPORT short has_coords(char *mol_pkl, size_t mol_pkl_sz);
+RDKIT_RDKITCFFI_EXPORT short has_coords(const char *mol_pkl, size_t mol_pkl_sz);
 RDKIT_RDKITCFFI_EXPORT short set_2d_coords(char **pkl, size_t *pkl_sz);
 RDKIT_RDKITCFFI_EXPORT short set_3d_coords(char **pkl, size_t *pkl_sz,
                                            const char *params_json);
@@ -152,13 +152,32 @@ RDKIT_RDKITCFFI_EXPORT short set_2d_coords_aligned(char **pkl, size_t *pkl_sz,
 RDKIT_RDKITCFFI_EXPORT void free_ptr(char *ptr);
 
 RDKIT_RDKITCFFI_EXPORT char *version();
-RDKIT_RDKITCFFI_EXPORT void enable_logging();
-RDKIT_RDKITCFFI_EXPORT void disable_logging();
+RDKIT_RDKITCFFI_EXPORT short enable_logging();
+RDKIT_RDKITCFFI_EXPORT short enable_logger(const char *log_name);
+RDKIT_RDKITCFFI_EXPORT short disable_logging();
+RDKIT_RDKITCFFI_EXPORT short disable_logger(const char *log_name);
 
 // chirality
 RDKIT_RDKITCFFI_EXPORT short use_legacy_stereo_perception(short value);
 RDKIT_RDKITCFFI_EXPORT short allow_non_tetrahedral_chirality(short value);
 
+// PNG metadata
+RDKIT_RDKITCFFI_EXPORT short add_mol_to_png_blob(char **png_blob,
+                                                 size_t *png_blob_sz,
+                                                 const char *mpkl,
+                                                 size_t mpkl_size,
+                                                 const char *details_json);
+RDKIT_RDKITCFFI_EXPORT short get_mol_from_png_blob(const char *png_blob,
+                                                   size_t png_blob_sz,
+                                                   char **mpkl, size_t *mpkl_sz,
+                                                   const char *details_json);
+RDKIT_RDKITCFFI_EXPORT short get_mols_from_png_blob(const char *png_blob,
+                                                    size_t png_blob_sz,
+                                                    char ***mpkl_array,
+                                                    size_t **mpkl_sz_array,
+                                                    const char *details_json);
+RDKIT_RDKITCFFI_EXPORT void free_mol_array(char ***pkl_array,
+                                           size_t **pkl_sz_array);
 // logging
 RDKIT_RDKITCFFI_EXPORT void *set_log_tee(const char *log_name);
 RDKIT_RDKITCFFI_EXPORT void *set_log_capture(const char *log_name);

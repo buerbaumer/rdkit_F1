@@ -772,7 +772,8 @@ void generateDepictionMatching2DStructure(
   RDGeom::Transform3D trans;
   if (p.alignOnly) {
     if (!hasExistingCoords) {
-      compute2DCoords(mol, nullptr, false, true, 0, 0, 0, false, p.forceRDKit);
+      compute2DCoords(mol, nullptr, false, true, 0, 0, 0, false, p.forceRDKit,
+                      p.useRingTemplates);
     }
     RDKit::MatchVectType atomMap(refMatchVect.size());
     std::transform(
@@ -796,7 +797,7 @@ void generateDepictionMatching2DStructure(
     auto newConfId = compute2DCoords(
         mol, &coordMap, false /* canonOrient */,
         !(p.adjustMolBlockWedging && hasExistingCoords) /* clearConfs */, 0, 0,
-        0, false, p.forceRDKit);
+        0, false, p.forceRDKit, p.useRingTemplates);
     if (p.adjustMolBlockWedging) {
       // we need to clear the existing wedging information if:
       // 1. the original molecule had no coordinates to start with
@@ -1032,8 +1033,8 @@ RDKit::MatchVectType generateDepictionMatching2DStructure(
       // need to generate some before attempting the alignment
       // and clear any existing wedging info if requested
       if (!mol.getNumConformers()) {
-        compute2DCoords(mol, nullptr, false, true, 0, 0, 0, false,
-                        p.forceRDKit);
+        compute2DCoords(mol, nullptr, false, true, 0, 0, 0, false, p.forceRDKit,
+                        p.useRingTemplates);
         if (p.adjustMolBlockWedging) {
           RDKit::Chirality::clearMolBlockWedgingInfo(mol);
           p.adjustMolBlockWedging = false;
@@ -1088,7 +1089,8 @@ RDKit::MatchVectType generateDepictionMatching2DStructure(
     if (p.acceptFailure) {
       // if we accept failure, we generate a standard set of
       // coordinates and clear any existing wedging info if requested
-      compute2DCoords(mol, nullptr, false, true, 0, 0, 0, false, p.forceRDKit);
+      compute2DCoords(mol, nullptr, false, true, 0, 0, 0, false, p.forceRDKit,
+                      p.useRingTemplates);
       if (p.adjustMolBlockWedging) {
         RDKit::Chirality::clearMolBlockWedgingInfo(mol);
       }
@@ -1295,14 +1297,17 @@ double normalizeDepiction(RDKit::ROMol &mol, int confId, int canonicalize,
     }
   }
   std::unique_ptr<RDGeom::Transform3D> canonTrans;
+  auto ctd = MolTransforms::computeCentroid(conf);
   if (canonicalize) {
-    auto ctd = MolTransforms::computeCentroid(conf);
     canonTrans.reset(MolTransforms::computeCanonicalTransform(conf, &ctd));
     if (canonicalize < 0) {
       RDGeom::Transform3D rotate90;
       rotate90.SetRotation(0., 1., RDGeom::Point3D(0., 0., 1.));
       *canonTrans *= rotate90;
     }
+  } else {
+    canonTrans.reset(new RDGeom::Transform3D());
+    canonTrans->SetTranslation(-ctd);
   }
   bool isScaleFactorSane = (scaleFactor > SCALE_FACTOR_THRESHOLD);
   if (isScaleFactorSane && fabs(scaleFactor - 1.0) > SCALE_FACTOR_THRESHOLD) {
