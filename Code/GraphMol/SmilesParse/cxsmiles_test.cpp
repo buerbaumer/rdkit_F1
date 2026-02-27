@@ -24,7 +24,6 @@
 #include "SmartsWrite.h"
 #include <RDGeneral/RDLog.h>
 #include <fstream>
-#include <iostream>
 
 constexpr bool GenerateExpectedFiles = false;
 
@@ -1510,7 +1509,7 @@ TEST_CASE("Github #7372: SMILES output option to disable dative bonds") {
     auto m = "[NH3]->[Fe]-[NH2]"_smiles;
     REQUIRE(m);
     auto smi = MolToCXSmarts(*m);
-    CHECK(smi == "[#7H3]-[Fe]-[#7H2] |C:0.0|");
+    CHECK(smi == "[#7]-[Fe]-[#7] |C:0.0|");
   }
   SECTION("two dative bonds") {
     auto m = "[NH3][Fe][NH3]"_smiles;  // auto single->dative conversion
@@ -1522,7 +1521,7 @@ TEST_CASE("Github #7372: SMILES output option to disable dative bonds") {
     auto m = "[NH3][Fe][NH3]"_smiles;  // auto single->dative conversion
     REQUIRE(m);
     auto smi = MolToCXSmarts(*m);
-    CHECK(smi == "[#7H3]-[Fe]-[#7H3] |C:0.0,2.1|");
+    CHECK(smi == "[#7]-[Fe]-[#7] |C:0.0,2.1|");
   }
 }
 
@@ -1719,5 +1718,17 @@ TEST_CASE("Test CXSmilesFields option parsing from JSON") {
                                  "{\"CX_COORDS\":false,\"CX_ALL\":true}");
     CHECK(cxSmilesFields == SmilesWrite::CXSmilesFields::CX_ALL_BUT_COORDS);
     CHECK(restoreBondDirs == RestoreBondDirOptionClear);
+  }
+}
+
+TEST_CASE("atom maps and dummy labels in CXSMILES") {
+  SECTION("basics") {
+    auto m = "CC[*:1]"_smiles;
+    REQUIRE(m);
+    CHECK(m->getAtomWithIdx(2)->hasProp(common_properties::dummyLabel));
+    CHECK(m->getAtomWithIdx(2)->hasProp(common_properties::molAtomMapNumber));
+    CHECK(MolToCXSmiles(*m) == "CC[*:1]");
+    m->getAtomWithIdx(2)->setProp(common_properties::dummyLabel, "R1");
+    CHECK(MolToCXSmiles(*m) == "CC[*:1] |atomProp:2.dummyLabel.R1|");
   }
 }

@@ -29,6 +29,9 @@ namespace python = boost::python;
 namespace RDKit {
 void expandQuery(QueryAtom *self, const QueryAtom *other,
                  Queries::CompositeQueryType how, bool maintainOrder) {
+  if (!other) {
+    throw_value_error("other Atom is null");
+  }
   if (other->hasQuery()) {
     const QueryAtom::QUERYATOM_QUERY *qry = other->getQuery();
     self->expandQuery(qry->copy(), how, maintainOrder);
@@ -36,6 +39,9 @@ void expandQuery(QueryAtom *self, const QueryAtom *other,
 }
 
 void setQuery(QueryAtom *self, const QueryAtom *other) {
+  if (!other) {
+    throw_value_error("other Atom is null");
+  }
   if (other->hasQuery()) {
     self->setQuery(other->getQuery()->copy());
   }
@@ -141,11 +147,13 @@ AtomPDBResidueInfo *AtomGetPDBResidueInfo(Atom *atom) {
 
 namespace {
 int getExplicitValenceHelper(const Atom *atom) {
-  RDLog::deprecationWarning("please use GetValence(which=)");
+  RDLog::deprecationWarning(
+      "please use GetValence(Chem.ValenceType.EXPLICIT) instead");
   return atom->getValence(Atom::ValenceType::EXPLICIT);
 };
 int getImplicitValenceHelper(const Atom *atom) {
-  RDLog::deprecationWarning("please use GetValence(getExplicit=False)");
+  RDLog::deprecationWarning(
+      "please use GetValence(Chem.ValenceType.IMPLICIT) instead");
   return atom->getValence(Atom::ValenceType::IMPLICIT);
 };
 }  // namespace
@@ -172,6 +180,9 @@ struct atom_wrapper {
         .def(python::init<const Atom &>(python::args("self", "other")))
         .def(python::init<unsigned int>(python::args("self", "num"),
                                         "Constructor, takes the atomic number"))
+
+        .def_readonly("NOATOM", &Atom::NOATOM,
+                      "marker for unspecified int values")
 
         .def("__copy__", &Atom::copy,
              python::return_value_policy<
@@ -217,14 +228,15 @@ struct atom_wrapper {
         .def(
             "GetExplicitValence", &getExplicitValenceHelper,
             python::args("self"),
-            "DEPRECATED, please use GetValence(Chem.ValenceType,EXPLICIT) instead.\nReturns the explicit valence of the atom.\n")
+            "DEPRECATED, please use GetValence(Chem.ValenceType.EXPLICIT) instead.\nReturns the explicit valence of the atom.\n")
         .def(
             "GetImplicitValence", &getImplicitValenceHelper,
             python::args("self"),
-            "DEPRECATED, please use getValence(Chem.ValenceType,IMPLICIT) instead.\nReturns the number of implicit Hs on the atom.\n")
-        .def("GetValence", &Atom::getValence,
-             (python::args("self"), python::args("which")),
-             "Returns the valence (explicit or implicit) of the atom.\n")
+            "DEPRECATED, please use GetValence(Chem.ValenceType.IMPLICIT) instead.\nReturns the number of implicit Hs on the atom.\n")
+        .def(
+            "GetValence", &Atom::getValence,
+            (python::args("self"), python::args("which")),
+            "Returns the valence (Chem.ValenceType.EXPLICIT or Chem.ValenceType.IMPLICIT) of the atom.\n")
         .def("GetTotalValence", &Atom::getTotalValence, python::args("self"),
              "Returns the total valence (explicit + implicit) of the atom.\n\n")
         .def("HasValenceViolation", &Atom::hasValenceViolation,
@@ -445,8 +457,7 @@ struct atom_wrapper {
              (python::arg("self"), python::arg("includePrivate") = true,
               python::arg("includeComputed") = true,
               python::arg("autoConvertStrings") = true),
-             "Returns a dictionary of the properties set on the Atom.\n"
-             " n.b. some properties cannot be converted to python types.\n")
+             getPropsAsDictDocString.c_str())
 
         .def("UpdatePropertyCache", &Atom::updatePropertyCache,
              (python::arg("self"), python::arg("strict") = true),
