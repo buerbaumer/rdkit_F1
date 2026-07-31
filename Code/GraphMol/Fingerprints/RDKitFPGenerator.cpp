@@ -45,10 +45,9 @@ std::vector<std::uint32_t> *RDKitFPAtomInvGenerator::getAtomInvariants(
     const ROMol &mol) const {
   auto *result = new std::vector<std::uint32_t>();
   result->reserve(mol.getNumAtoms());
-  for (ROMol::ConstAtomIterator atomIt = mol.beginAtoms();
-       atomIt != mol.endAtoms(); ++atomIt) {
-    unsigned int aHash = ((*atomIt)->getAtomicNum() % 128) << 1 |
-                         static_cast<unsigned int>((*atomIt)->getIsAromatic());
+  for (const auto atom : mol.atoms()) {
+    unsigned int aHash = (atom->getAtomicNum() % 128) << 1 |
+                         static_cast<unsigned int>(atom->getIsAromatic());
     result->push_back(aHash);
   }
   return result;
@@ -119,7 +118,7 @@ RDKitFPArguments::RDKitFPArguments(unsigned int minPath, unsigned int maxPath,
 
 template <typename OutputType>
 void RDKitFPAtomEnv<OutputType>::updateAdditionalOutput(
-    AdditionalOutput *additionalOutput, size_t bitId) const {
+    AdditionalOutput *additionalOutput, std::uint64_t bitId) const {
   PRECONDITION(additionalOutput, "bad output pointer");
   if (additionalOutput->bitPaths) {
     (*additionalOutput->bitPaths)[bitId].push_back(d_bondPath);

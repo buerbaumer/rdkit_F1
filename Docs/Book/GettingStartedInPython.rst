@@ -252,9 +252,9 @@ MDL Mol blocks are also available:
   <BLANKLINE>
     4  4  0  0  0  0  0  0  0  0999 V2000
       1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-     -0.0000   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-     -1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
       0.0000    1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+     -1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+     -0.0000   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
     1  2  1  0
     2  3  1  0
     3  4  1  0
@@ -273,9 +273,9 @@ To include names in the mol blocks, set the molecule's “_Name” property:
   <BLANKLINE>
     4  4  0  0  0  0  0  0  0  0999 V2000
       1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-     -0.0000   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-     -1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
       0.0000    1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+     -1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+     -0.0000   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
     1  2  1  0
     2  3  1  0
     3  4  1  0
@@ -306,9 +306,9 @@ You can either include 2D coordinates (i.e. a depiction):
   <BLANKLINE>
     4  4  0  0  0  0  0  0  0  0999 V2000
       1.0607   -0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-     -0.0000   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-     -1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
       0.0000    1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+     -1.0607    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+     -0.0000   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
     1  2  1  0
     2  3  1  0
     3  4  1  0
@@ -517,7 +517,7 @@ More detail about the smallest set of smallest rings (SSSR) is available:
   >>> list(ssr[0])
   [1, 2, 3]
   >>> list(ssr[1])
-  [4, 5, 2, 3]
+  [2, 3, 4, 5]
 
 As the name indicates, this is a symmetrized SSSR; if you are interested in the number of “true” SSSR, use the GetSSSR function (note that in this case there's no difference).
 
@@ -579,9 +579,9 @@ This can be changed with the :py:func:`rdkit.Chem.rdmolops.Kekulize` function:
   rdkit.Chem.rdchem.BondType.AROMATIC
   >>> Chem.Kekulize(m)
   >>> m.GetBondWithIdx(0).GetBondType()
-  rdkit.Chem.rdchem.BondType.DOUBLE
-  >>> m.GetBondWithIdx(1).GetBondType()
   rdkit.Chem.rdchem.BondType.SINGLE
+  >>> m.GetBondWithIdx(1).GetBondType()
+  rdkit.Chem.rdchem.BondType.DOUBLE
 
 By default, the bonds are still marked as being aromatic:
 
@@ -2916,7 +2916,7 @@ If the molecule has coordinates, then the features will also have reasonable loc
   >>> feats[0].GetPos()
   <rdkit.Geometry.rdGeometry.Point3D object at 0x...>
   >>> list(feats[0].GetPos())
-  [-2.999..., -1.558..., 0.0]
+  [-2.402..., -1.619..., 0.0]
 
 
 2D Pharmacophore Fingerprints
@@ -3667,7 +3667,8 @@ cubane only contains 5 rings, even though there are
 “obviously” 6. This problem can be fixed by implementing a *small*
 (instead of *smallest*) set of smallest rings algorithm that returns
 symmetric results. This is the approach that we took with the RDKit
-in :py:func:`rdkit.Chem.GetSymmSSSR`.
+in :py:func:`rdkit.Chem.GetSymmSSSR`; we return the set of "Relevant 
+Cycles" calculated by the RingDecomposerLib library [#RDL]_.
 
 Because it is sometimes useful to know the "true" SSSR rings, there
 is a :py:func:`rdkit.Chem.GetSSSR` function which returns this
@@ -4068,7 +4069,7 @@ All of the available filters can also be considered at once. Additional informat
 .. [#brenk] Brenk, R.; Schipani, A.; James, D.; Krasowski, A.; Gilbert, I. H.; Frearson, J.; Wyatt, P. G. "Lessons Learnt from Assembling Screening Libraries for Drug Discovery for Neglected Diseases." *ChemMedChem* **3**:435–444 (2008)
 .. [#jadhav] Jadhav, A.; Ferreira, R. S.; Klumpp, C.; Mott, B. T.; Austin, C. P.; Inglese, J.; Thomas, C. J.; Maloney, D. J.; Shoichet, B. K.; Simeonov, A. "Quantitative Analyses of Aggregation, Autofluorescence, and Reactivity Artifacts in a Screen for Inhibitors of a Thiol Protease." *J. Med. Chem.* **53**:37–51 (2010)
 .. [#doveston] Doveston, R. G.; Tosatti, P.; Dow, M.; Foley, D. J.; Li, H. Y.; Campbell, A. J.; House, D.; Churcher, I.; Marsden, S. P.; Nelson, A. "A Unified Lead-Oriented Synthesis of over Fifty Molecular Scaffolds." *Org. Biomol. Chem.* **13**:859–865. (2014)
-
+.. [#RDL] Flachsenberg, F.; Andresen, N.; Rarey, M. "RingDecomposerLib: An Open-Source Implementation of Unique Ring Families and Other Cycle Bases." *J. Chem. Inf. Model.* **57**:122-126 (2017)
 
 License
 *******

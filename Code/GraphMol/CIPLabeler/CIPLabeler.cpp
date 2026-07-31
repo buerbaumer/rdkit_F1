@@ -113,6 +113,12 @@ bool labelAux(std::vector<std::unique_ptr<Configuration>> &configs,
     }
     // FIXME: specific to each descriptor
     const auto &foci = config->getFoci();
+
+    // Skip if none of the foci atoms were reached during expansion
+    if (std::ranges::none_of(foci,
+                             [&](auto f) { return digraph.seenAtom(f); })) {
+      continue;
+    }
     for (const auto &node : digraph.getNodes(foci[0])) {
       if (node->isDuplicate()) {
         continue;
@@ -225,7 +231,7 @@ void label(std::vector<std::unique_ptr<Configuration>> &configs,
 void assignCIPLabels(ROMol &mol, const boost::dynamic_bitset<> &atoms,
                      const boost::dynamic_bitset<> &bonds,
                      unsigned int maxRecursiveIterations) {
-  ControlCHandler::reset();
+  ControlCHandler hdlr;
 
   // reset the mark, for the case that this fails
   mol.clearProp(common_properties::_CIPComputed);
@@ -236,7 +242,7 @@ void assignCIPLabels(ROMol &mol, const boost::dynamic_bitset<> &atoms,
     label(configs, maxRecursiveIterations);
   } catch (const ControlCCaught &) {
   }
-  if (ControlCHandler::getGotSignal()) {
+  if (hdlr.getGotSignal()) {
     BOOST_LOG(rdWarningLog)
         << "Interrupted, cancelling CIP label calculation" << std::endl;
     return;

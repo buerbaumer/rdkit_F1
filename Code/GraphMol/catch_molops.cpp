@@ -681,7 +681,6 @@ TEST_CASE("Github #8945") {
   }
 }
 
-#ifdef RDK_USE_URF
 TEST_CASE("Test findRingFamilies") {
   SECTION("basic check") {
     auto m = R"SMI(c1ccc2c(c1)C3CC3C4CC5CC4CC25)SMI"_smiles;
@@ -718,13 +717,17 @@ TEST_CASE("Test findRingFamilies") {
     auto m = R"SMI(C1CCCCC1)SMI"_smiles;
     REQUIRE(m);
 
+    auto r = m->getRingInfo();
+    REQUIRE(r);
+
+    // ring families are initialized during findSSSR
+    REQUIRE(r->areRingFamiliesInitialized());
+    r->resetRingFamilies();
+
     // Make one bond a ZOB; this breaks the cyclohexane ring
     m->getBondWithIdx(0)->setBondType(Bond::ZERO);
 
     MolOps::findRingFamilies(*m);
-
-    auto r = m->getRingInfo();
-    REQUIRE(r);
 
     REQUIRE(r->areRingFamiliesInitialized());
     CHECK(r->atomRingFamilies().empty() == true);
@@ -738,11 +741,14 @@ TEST_CASE("Test findRingFamilies") {
     auto m = R"SMI(N->1CCN->[Pt]1)SMI"_smiles;
     REQUIRE(m);
 
-    MolOps::findRingFamilies(*m, includeDativeBonds);
-
     auto r = m->getRingInfo();
     REQUIRE(r);
 
+    // ring families are initialized during findSSSR
+    REQUIRE(r->areRingFamiliesInitialized());
+    r->resetRingFamilies();
+
+    MolOps::findRingFamilies(*m, includeDativeBonds);
     REQUIRE(r->areRingFamiliesInitialized());
 
     unsigned int numRings = (includeDativeBonds ? 1 : 0);
@@ -757,11 +763,15 @@ TEST_CASE("Test findRingFamilies") {
     auto m = "CC1O[H]O=C(C)C1 |H:4.3|"_smiles;
     REQUIRE(m);
 
-    constexpr bool includeDativeBonds = false;
-    MolOps::findRingFamilies(*m, includeDativeBonds, includeHydrogenBonds);
-
     auto r = m->getRingInfo();
     REQUIRE(r);
+
+    // ring families are initialized during findSSSR
+    REQUIRE(r->areRingFamiliesInitialized());
+    r->resetRingFamilies();
+
+    constexpr bool includeDativeBonds = false;
+    MolOps::findRingFamilies(*m, includeDativeBonds, includeHydrogenBonds);
 
     REQUIRE(r->areRingFamiliesInitialized());
 
@@ -770,4 +780,108 @@ TEST_CASE("Test findRingFamilies") {
     CHECK(r->bondRingFamilies().size() == numRings);
   }
 }
-#endif
+
+TEST_CASE("GitHub #9270: Segfault when calling MolToSmiles on submol") {
+  SECTION("both atoms mapped") {
+    // Legacy Stereo perceives double bond stereo as E/Z,
+    // modern stereo as CIS/TRANS, but both should result
+    // in the same output
+    auto useLegacy = GENERATE(true, false);
+    CAPTURE(useLegacy);
+    UseLegacyStereoPerceptionFixture useLegacyFixture(useLegacy);
+
+    auto mol = "C/C=C/CC"_smiles;
+    REQUIRE(mol);
+
+    auto dblBond = mol->getBondWithIdx(1);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+
+    if (useLegacy) {
+      REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOE);
+    } else {
+      REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOTRANS);
+    }
+    REQUIRE(dblBond->getStereoAtoms() == std::vector<int>{0, 3});
+
+    // Extract all atoms and bond except the last atom;
+    // both stereo atoms should be mapped
+    std::vector<unsigned int> atoms{0, 1, 2, 3};
+    std::vector<unsigned int> bonds{0, 1, 2};
+    auto subset = copyMolSubset(*mol, atoms, bonds);
+    REQUIRE(subset);
+
+    dblBond = subset->getBondWithIdx(1);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+    REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOTRANS);
+    REQUIRE(dblBond->getStereoAtoms() == std::vector<int>{0, 3});
+  }
+
+  SECTION("one stereo atom replaced with alternative") {
+    UseLegacyStereoPerceptionFixture useLegacyFixture(false);
+
+    auto mol = "OC(/C)=C/C"_smiles;
+    REQUIRE(mol);
+
+    auto dblBond = mol->getBondWithIdx(2);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+    REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOTRANS);
+    REQUIRE(dblBond->getStereoAtoms() == std::vector<int>{0, 4});
+
+    // Extract all atoms and bonds except the first stereo atom (atom 0)
+    std::vector<unsigned int> atoms{1, 2, 3, 4};
+    std::vector<unsigned int> bonds{1, 2, 3};
+    auto subset = copyMolSubset(*mol, atoms, bonds);
+    REQUIRE(subset);
+
+    dblBond = subset->getBondWithIdx(1);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+    REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOCIS);
+    REQUIRE(dblBond->getStereoAtoms() == std::vector<int>{1, 3});
+  }
+
+  SECTION("both atoms on one side removed") {
+    UseLegacyStereoPerceptionFixture useLegacyFixture(false);
+
+    auto mol = "OC(/C)=C/C"_smiles;
+    REQUIRE(mol);
+
+    auto dblBond = mol->getBondWithIdx(2);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+    REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOTRANS);
+    REQUIRE(dblBond->getStereoAtoms() == std::vector<int>{0, 4});
+
+    // Extract double bond and second stereo atom
+    std::vector<unsigned int> atoms{1, 3, 4};
+    std::vector<unsigned int> bonds{2, 3};
+    auto subset = copyMolSubset(*mol, atoms, bonds);
+    REQUIRE(subset);
+
+    dblBond = subset->getBondWithIdx(0);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+    REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREONONE);
+    REQUIRE(dblBond->getStereoAtoms().empty());
+  }
+
+  SECTION("both atoms replaced - double swap") {
+    UseLegacyStereoPerceptionFixture useLegacyFixture(false);
+
+    auto mol = "OC(/C)=C(/C)N"_smiles;
+    REQUIRE(mol);
+
+    auto dblBond = mol->getBondWithIdx(2);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+    REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOTRANS);
+    REQUIRE(dblBond->getStereoAtoms() == std::vector<int>{0, 4});
+
+    // Extract all atoms and bonds except the first stereo atom (atom 0)
+    std::vector<unsigned int> atoms{1, 2, 3, 5};
+    std::vector<unsigned int> bonds{1, 2, 4};
+    auto subset = copyMolSubset(*mol, atoms, bonds);
+    REQUIRE(subset);
+
+    dblBond = subset->getBondWithIdx(1);
+    REQUIRE(dblBond->getBondType() == Bond::BondType::DOUBLE);
+    REQUIRE(dblBond->getStereo() == Bond::BondStereo::STEREOTRANS);
+    REQUIRE(dblBond->getStereoAtoms() == std::vector<int>{1, 3});
+  }
+}

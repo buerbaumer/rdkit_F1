@@ -435,13 +435,15 @@ ROMol *getNormal(const RWMol &mol) {
   return res;
 }
 
-void kekulizeMol(ROMol &mol, bool clearAromaticFlags = false) {
+void kekulizeMol(ROMol &mol, bool clearAromaticFlags = false,
+                 bool canonical = true) {
   auto &wmol = static_cast<RWMol &>(mol);
-  MolOps::Kekulize(wmol, clearAromaticFlags);
+  MolOps::Kekulize(wmol, clearAromaticFlags, canonical);
 }
-void kekulizeMolIfPossible(ROMol &mol, bool clearAromaticFlags = false) {
+void kekulizeMolIfPossible(ROMol &mol, bool clearAromaticFlags = false,
+                           bool canonical = true) {
   auto &wmol = static_cast<RWMol &>(mol);
-  MolOps::KekulizeIfPossible(wmol, clearAromaticFlags);
+  MolOps::KekulizeIfPossible(wmol, clearAromaticFlags, canonical);
 }
 
 void cleanupMol(ROMol &mol) {
@@ -495,9 +497,12 @@ void cleanupAtropisomersMol(ROMol &mol) {
 }
 
 VECT_INT_VECT getSymmSSSR(ROMol &mol, bool includeDativeBonds,
-                          bool includeHydrogenBonds) {
+                          bool includeHydrogenBonds,
+                          MolOps::SymmetrizeSSSRAlgorithm algorithm,
+                          bool recalcSSSR) {
   VECT_INT_VECT rings;
-  MolOps::symmetrizeSSSR(mol, rings, includeDativeBonds, includeHydrogenBonds);
+  MolOps::symmetrizeSSSR(mol, rings, algorithm, recalcSSSR, includeDativeBonds,
+                         includeHydrogenBonds);
   return rings;
 }
 PyObject *getDistanceMatrix(ROMol &mol, bool useBO = false,
@@ -1267,7 +1272,18 @@ struct molops_wrapper {
                  python::arg("includeHydrogenBonds") = false),
                 docString.c_str());
 
-    // ------------------------------------------------------------------------
+    python::enum_<MolOps::SymmetrizeSSSRAlgorithm>("SymmetrizeSSSRAlgorithm")
+        .value("DEFAULT", MolOps::SymmetrizeSSSRAlgorithm::DEFAULT)
+        .value("LEGACY", MolOps::SymmetrizeSSSRAlgorithm::LEGACY)
+        .value("RDL", MolOps::SymmetrizeSSSRAlgorithm::RDL);
+
+    python::def(
+        "SetUseLegacyRingFinding", MolOps::setUseLegacyRingFinding,
+        python::args("val"),
+        "sets usage of the legacy symmetric SSSR code during sanitization");
+    python::def("GetUseLegacyRingFinding", MolOps::getUseLegacyRingFinding,
+                "returns whether or not the legacy symmetric SSSR code is "
+                "being used during sanitization");
     docString =
         "Get a symmetrized SSSR for a molecule.\n\
 \n\
@@ -1280,13 +1296,18 @@ struct molops_wrapper {
     - mol: the molecule to use.\n\
     - includeDativeBonds: whether or not dative bonds should be included in the ring finding.\n\
     - includeHydrogenBonds: whether or not hydrogen bonds should be included in the ring finding.\n\
+    - algorithm: the algorithm to use for symmetrizing the SSSR.\n\
+    - recalcSSSR: whether or not to recalculate the SSSR before symmetrizing it.\n\
 \n\
   RETURNS: a sequence of sequences containing the rings found as atom ids\n\
 \n";
-    python::def("GetSymmSSSR", getSymmSSSR,
-                (python::arg("mol"), python::arg("includeDativeBonds") = false,
-                 python::arg("includeHydrogenBonds") = false),
-                docString.c_str());
+    python::def(
+        "GetSymmSSSR", getSymmSSSR,
+        (python::arg("mol"), python::arg("includeDativeBonds") = false,
+         python::arg("includeHydrogenBonds") = false,
+         python::arg("algorithm") = MolOps::SymmetrizeSSSRAlgorithm::DEFAULT,
+         python::arg("recalcSSSR") = true),
+        docString.c_str());
 
     // ------------------------------------------------------------------------
     docString =
@@ -1320,7 +1341,6 @@ struct molops_wrapper {
     python::def("FastFindRings", MolOps::fastFindRings, docString.c_str(),
                 python::args("mol"));
 
-#ifdef RDK_USE_URF
     docString =
         "Generate Unique Ring Families.\n\
 \n\
@@ -1336,7 +1356,6 @@ struct molops_wrapper {
                 (python::args("mol"), python::arg("includeDativeBonds") = false,
                  python::arg("includeHydrogenBonds") = false),
                 docString.c_str());
-#endif
 
     // ------------------------------------------------------------------------
     docString = R"DOC(Parameters controlling H addition.)DOC";
@@ -1819,6 +1838,15 @@ to the terminal dummy atoms.\n\
       molecule will be marked non-aromatic following the kekulization.
       Default value is False.
 
+    - canonical: (optional) if true, uses canonical atom ranking so
+      that the kekulization result is independent of the atom ordering in the
+      molecule.  Set to false to skip the ranking step for better performance
+      when deterministic output is not required (e.g. during sanitization).
+      Note, this "canonical" order only really makes sense when the molecule's
+      chemistry is sane, like after sanitization. If stereochemistry hasn't been
+      perceived, the chemistry of the molecule is inconsistent, and
+      "canonical" atom ranks are only a technical artifact.
+
   NOTES:
 
     - The molecule is modified in place.
@@ -1832,27 +1860,43 @@ to the terminal dummy atoms.\n\
 
 )DOC";
     python::def("Kekulize", kekulizeMol,
-                (python::arg("mol"), python::arg("clearAromaticFlags") = false),
+                (python::arg("mol"), python::arg("clearAromaticFlags") = false,
+                 python::arg("canonical") = true),
                 docString.c_str());
 
     // ------------------------------------------------------------------------
     docString =
-        "Kekulizes the molecule if possible. Otherwise the molecule is not modified\n\
+        R"DOC(Kekulizes the molecule if possible. Otherwise the molecule is not modified
+
+  ARGUMENTS:
+
+    - mol: the molecule to use
+
+    - clearAromaticFlags: (optional) if this toggle is set, all atoms and bonds in the 
+      molecule will be marked non-aromatic if the kekulization succeds.
+      Default value is False.
+
+    - canonical: (optional) if true  uses canonical atom ranking so
+      that the kekulization result is independent of the atom ordering in the
+      molecule.  Set to false to skip the ranking step for better performance
+      when deterministic output is not required (e.g. during sanitization).
+      Note, this "canonical" order only really makes sense when the molecule's
+      chemistry is sane, like after sanitization. If stereochemistry hasn't been
+      perceived, the chemistry of the molecule is inconsistent, and
+      "canonical" atom ranks are only a technical artifact.
+
 \n\
-  ARGUMENTS:\n\
-\n\
-    - mol: the molecule to use\n\
-\n\
-    - clearAromaticFlags: (optional) if this toggle is set, all atoms and bonds in the \n\
-      molecule will be marked non-aromatic if the kekulization succeds.\n\
+    - canonical: (optional) if True, uses canonical atom ranking so that the\n\
+      kekulization result is independent of the atom ordering in the molecule.\n\
       Default value is False.\n\
 \n\
   NOTES:\n\
 \n\
     - The molecule is modified in place.\n\
-\n";
+    )DOC";
     python::def("KekulizeIfPossible", kekulizeMolIfPossible,
-                (python::arg("mol"), python::arg("clearAromaticFlags") = false),
+                (python::arg("mol"), python::arg("clearAromaticFlags") = false,
+                 python::arg("canonical") = true),
                 docString.c_str());
     // ------------------------------------------------------------------------
     docString =
